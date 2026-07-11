@@ -11,6 +11,7 @@ closed. Treat results as a summary, not a faithful round-trip of the project.
 import gzip
 import json
 import os
+import zlib
 from xml.etree import ElementTree as ET
 
 from mcp.server.fastmcp import Context
@@ -213,11 +214,11 @@ def _parse(path):
     )
 
     tracks = []
-    for parent in live_set.iter("Tracks"):
+    parent = next(live_set.iter("Tracks"), None)
+    if parent is not None:
         for i, t in enumerate(list(parent)):
             if t.tag in _TRACK_KIND:
                 tracks.append(_track(t, i))
-        break
 
     master_elem = live_set.find("MainTrack") or live_set.find("MasterTrack")
     scenes = [_val(s.find("Name"), "") or "" for s in live_set.findall(".//Scenes/Scene")]
@@ -238,6 +239,18 @@ def _parse(path):
     }
 
 
+def _keyed_by_name(tracks):
+    """Key tracks by name, disambiguating duplicates as 'name #2', 'name #3', so a
+    diff does not silently collapse same-named tracks to the last one."""
+    seen = {}
+    out = {}
+    for t in tracks:
+        name = t["name"]
+        seen[name] = seen.get(name, 0) + 1
+        out[name if seen[name] == 1 else f"{name} #{seen[name]}"] = t
+    return out
+
+
 def _load(path):
     """Parse with a friendly error string on failure. Returns (data, error)."""
     path = os.path.expanduser(path)
@@ -245,8 +258,8 @@ def _load(path):
         return None, f"No file at {path}. Pass the full path to a .als file."
     try:
         return _parse(path), None
-    except gzip.BadGzipFile:
-        return None, f"{path} is not a gzip-compressed .als file."
+    except (gzip.BadGzipFile, EOFError, zlib.error):
+        return None, f"{path} is not a valid gzip-compressed .als file."
     except ET.ParseError as e:
         return None, f"Could not parse the .als XML in {path}: {e}"
     except OSError as e:
@@ -361,8 +374,8 @@ def als_diff(ctx: Context, path_a: str, path_b: str) -> str:
     if a["time_signature"] != b["time_signature"]:
         changes["time_signature"] = {"from": a["time_signature"], "to": b["time_signature"]}
 
-    by_name_a = {t["name"]: t for t in a["tracks"]}
-    by_name_b = {t["name"]: t for t in b["tracks"]}
+    by_name_a = _keyed_by_name(a["tracks"])
+    by_name_b = _keyed_by_name(b["tracks"])
     changes["tracks_added"] = [n for n in by_name_b if n not in by_name_a]
     changes["tracks_removed"] = [n for n in by_name_a if n not in by_name_b]
 

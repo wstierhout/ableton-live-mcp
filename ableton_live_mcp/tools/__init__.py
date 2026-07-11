@@ -19,7 +19,10 @@ _ALL = [
     "browser",
     "arrangement",
     "generators",
+    "generators_advanced",
     "offline",
+    "analysis",
+    "recipes",
     "prompts",
 ]
 
