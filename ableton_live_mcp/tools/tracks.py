@@ -221,3 +221,21 @@ def set_crossfade_assign(ctx: Context, track_index: int, assign: int) -> str:
         "set_crossfade_assign", {"track_index": track_index, "assign": assign}
     )
     return f"Crossfade assign: {r.get('crossfade_assign')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+def delete_device(ctx: Context, track_index: int, device_index: int) -> str:
+    """Delete a device from a track's chain by its position (0-based). Shifts the
+    indices of later devices, so re-read the chain afterwards."""
+    r = get_ableton_connection().send_command(
+        "delete_device", {"track_index": track_index, "device_index": device_index}
+    )
+    return f"Deleted device; '{r.get('track')}' now has {r.get('device_count')} devices"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def create_take_lane(ctx: Context, track_index: int) -> str:
+    """Add a take lane to a track (for comping multiple recorded takes on one
+    track). Returns the new take-lane count."""
+    r = get_ableton_connection().send_command("create_take_lane", {"track_index": track_index})
+    return f"'{r.get('track')}' now has {r.get('take_lane_count')} take lanes"

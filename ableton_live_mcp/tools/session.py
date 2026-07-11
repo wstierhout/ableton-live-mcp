@@ -280,3 +280,50 @@ def trigger_session_record(ctx: Context, record_length: float | None = None) -> 
         "trigger_session_record", params(record_length=record_length)
     )
     return f"Session record triggered ({record_length or 'unbounded'} beats)"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def tap_tempo(ctx: Context) -> str:
+    """Tap the tempo once. Tapping repeatedly at a beat sets the tempo to that
+    rate; a single tap nudges the transport. Returns the resulting tempo."""
+    r = get_ableton_connection().send_command("tap_tempo")
+    return f"Tapped tempo; now {r.get('tempo')} BPM"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_groove_amount(ctx: Context, amount: float) -> str:
+    """Set the global Groove Amount (0.0 to 1.0), which scales how strongly every
+    clip's assigned groove is applied across the whole set."""
+    r = get_ableton_connection().send_command("set_groove_amount", {"amount": amount})
+    return f"Global groove amount: {r.get('groove_amount')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_swing_amount(ctx: Context, amount: float) -> str:
+    """Set the global swing amount (0.0 to 1.0) used when quantizing with swing."""
+    r = get_ableton_connection().send_command("set_swing_amount", {"amount": amount})
+    return f"Global swing amount: {r.get('swing_amount')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def jump_by(ctx: Context, beats: float) -> str:
+    """Move the playhead by a relative number of beats (negative moves back).
+    Works during playback for on-the-fly navigation."""
+    r = get_ableton_connection().send_command("jump_by", {"beats": beats})
+    return f"Playhead at beat {r.get('current_song_time')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def jump_to_cue(ctx: Context, direction: int = 1) -> str:
+    """Jump the playhead to the next locator/cue (direction >= 0) or the previous
+    one (direction < 0)."""
+    r = get_ableton_connection().send_command("jump_to_cue", {"direction": direction})
+    return f"Playhead at beat {r.get('current_song_time')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_ableton_link(ctx: Context, enabled: bool) -> str:
+    """Enable or disable Ableton Link, which syncs tempo and phase with other
+    Link-enabled apps and devices on the local network."""
+    r = get_ableton_connection().send_command("set_ableton_link", {"enabled": enabled})
+    return f"Ableton Link enabled: {r.get('ableton_link_enabled')}"

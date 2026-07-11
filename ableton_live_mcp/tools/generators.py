@@ -122,7 +122,9 @@ DRUM_STYLES = {
 
 
 def _split_progression(progression):
-    symbols = [s for chunk in progression.split(",") for s in chunk.split("-") if s.strip()]
+    # Accept space-, comma-, or dash-separated symbols (chord symbols contain
+    # none of those), e.g. "Am9-Dm7", "Am9, Dm7", or "Am9 Dm7".
+    symbols = progression.replace(",", " ").replace("-", " ").split()
     if not symbols:
         raise ValueError("Empty progression")
     return symbols
@@ -426,3 +428,8 @@ def setup_session(ctx: Context, tempo: float, tracks: list[dict]) -> str:
                 entry["note"] = f"no browser match for '{query}'"
         report.append(entry)
     return json.dumps({"tempo": tempo, "tracks": report}, indent=2)
+
+
+# Advanced generators (voice-leading, jazz voicings, euclidean, genre progressions)
+# live in a sibling module; importing here registers them as part of this toolset.
+from . import generators_advanced  # noqa: E402, F401
