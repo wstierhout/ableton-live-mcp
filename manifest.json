@@ -1,0 +1,43 @@
+{
+  "manifest_version": "0.4",
+  "name": "ableton-live-mcp",
+  "display_name": "Ableton Live",
+  "version": "1.0.1",
+  "description": "Control Ableton Live from Claude: build tracks, edit MIDI, load devices, mix, and master.",
+  "long_description": "104 tools for driving a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators. Requires a one-time Remote Script install into Ableton (run `abletonmcp install`).",
+  "author": {
+    "name": "Wouter Stierhout",
+    "url": "https://github.com/wstierhout"
+  },
+  "homepage": "https://github.com/wstierhout/ableton-live-mcp",
+  "documentation": "https://github.com/wstierhout/ableton-live-mcp#readme",
+  "support": "https://github.com/wstierhout/ableton-live-mcp/issues",
+  "license": "MIT",
+  "keywords": ["ableton", "ableton live", "music", "midi", "daw", "mcp"],
+  "server": {
+    "type": "python",
+    "mcp_config": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/wstierhout/ableton-live-mcp@v1.0.1",
+        "ableton-live-mcp"
+      ],
+      "env": {
+        "ABLETON_TOOLSETS": "${user_config.toolsets}"
+      }
+    }
+  },
+  "user_config": {
+    "toolsets": {
+      "type": "string",
+      "title": "Toolsets",
+      "description": "Comma-separated tool groups to load, or 'all'. Groups: session, tracks, clips, devices, browser, arrangement, generators.",
+      "required": false,
+      "default": "all"
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0"
+  }
+}
