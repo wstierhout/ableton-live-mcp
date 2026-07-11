@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+- `get_session_snapshot`: the whole set (tempo, time signature, play state, and
+  every track's name, type, mute/solo/arm, volume, clip count, and devices) in one
+  call, instead of many per-track requests.
+- `set_clip_warp`: toggle warping and choose the warp algorithm on audio clips.
+- `set_simpler_playback_mode`: switch a Simpler between Classic, One-Shot, and
+  Slicing (sample chopping).
+- 127 tools. New tools verified against Ableton Live 12.4.
+
 ## 1.3.0
 
 - Deeper generators (all seedable, pure music theory): `generate_euclidean_drums`

@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 124 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 127 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
 a running Ableton Live set, plus offline tools that read and diff saved `.als`
 project files with Live closed.
@@ -71,10 +71,10 @@ an upright bass, and Rhodes chords, then put a limiter on the master at -1 dB."
 
 | Area | Tools |
 |---|---|
-| Session and transport | session info, play/stop, tempo, tap tempo, time signature, loop, locators and cue navigation, scenes, undo/redo, capture MIDI, song scale, global groove and swing, Ableton Link |
-| Tracks and mixer | create and delete MIDI, audio, and return tracks; delete or reorder devices; take lanes; volume, pan, mute, solo, arm, sends; input/output routing; meters |
-| Clips and notes | create clips, write and edit MIDI notes (with probability), quantize with strength, Groove Pool swing, loop, gain, pitch, warp |
-| Devices | browse and search by name, load instruments and effects onto any track including Master and Returns, read and set any device or rack-chain parameter, rack macro variations, per-pad drum control |
+| Session and transport | session info, one-call session snapshot, play/stop, tempo, tap tempo, time signature, loop, locators and cue navigation, scenes, undo/redo, capture MIDI, song scale, global groove and swing, Ableton Link |
+| Tracks and mixer | create and delete MIDI, audio, and return tracks; delete devices; take lanes; volume, pan, mute, solo, arm, sends; input/output routing; meters |
+| Clips and notes | create clips, write and edit MIDI notes (with probability), quantize with strength, Groove Pool swing, loop, gain, pitch, warp mode |
+| Devices | browse and search by name, load instruments and effects onto any track including Master and Returns, read and set any device or rack-chain parameter, rack macro variations, Simpler sample slicing, per-pad drum control |
 | Arrangement | place clips on the timeline, read and delete arrangement clips, write clip automation |
 | Generators | drum patterns in 7 styles, euclidean rhythms, chord progressions, voice-led jazz voicings (rootless, quartal, shell), genre-aware progressions, voice-leading melodies, walking basslines, humanize, ASCII drum grids, one-call session setup |
 | Batch | run many edits in one round trip and one undo step |
@@ -93,7 +93,7 @@ notes, overwrite an arrangement region), so save your work before a big session.
 
 ## Focusing the toolset
 
-The server registers 124 tools. That is a lot for a model to choose from on a small
+The server registers 127 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups: `session`, `tracks`,
 `clips`, `devices`, `browser`, `arrangement`, `generators`, `offline`. Unset loads

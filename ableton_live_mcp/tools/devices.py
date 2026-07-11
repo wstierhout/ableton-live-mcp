@@ -226,3 +226,15 @@ def rack_variation(
         params(track_index=track_index, device_index=device_index, action=action, index=index),
     )
     return f"{action}: variations={r.get('variation_count')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_simpler_playback_mode(ctx: Context, track_index: int, device_index: int, mode: int) -> str:
+    """Set a Simpler device's playback mode: 0 = Classic, 1 = One-Shot, 2 = Slicing.
+    Slicing chops the sample into playable slices, central to lofi/hip-hop
+    sampling. Errors if the device at that index is not a Simpler."""
+    r = get_ableton_connection().send_command(
+        "set_simpler_playback_mode",
+        {"track_index": track_index, "device_index": device_index, "mode": mode},
+    )
+    return f"Simpler '{r.get('device')}' playback mode: {r.get('playback_mode')}"

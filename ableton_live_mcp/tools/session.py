@@ -327,3 +327,12 @@ def set_ableton_link(ctx: Context, enabled: bool) -> str:
     Link-enabled apps and devices on the local network."""
     r = get_ableton_connection().send_command("set_ableton_link", {"enabled": enabled})
     return f"Ableton Link enabled: {r.get('ableton_link_enabled')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_session_snapshot(ctx: Context) -> str:
+    """One-call overview of the whole set: tempo, time signature, play state, and
+    for every track its name, type, mute/solo/arm, volume, clip count, and device
+    names, plus return-track names. Prefer this over many get_track_info calls."""
+    r = get_ableton_connection().send_command("get_session_snapshot")
+    return json.dumps(r, indent=2)
