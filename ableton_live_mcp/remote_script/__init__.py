@@ -296,7 +296,6 @@ class AbletonMCP(ControlSurface):
         "set_ableton_link": lambda s, p: s._set_ableton_link(p.get("enabled", True)),
         "delete_device": lambda s, p: s._delete_device(s._req(p, "track_index"), s._req(p, "device_index")),
         "create_take_lane": lambda s, p: s._create_take_lane(s._req(p, "track_index")),
-        "set_clip_warp": lambda s, p: s._set_clip_warp(s._req(p, "track_index"), s._req(p, "clip_index"), p),
         "set_simpler_playback_mode": lambda s, p: s._set_simpler_playback_mode(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "mode")),
     }
 
@@ -1793,12 +1792,14 @@ class AbletonMCP(ControlSurface):
         return {"ableton_link_enabled": self._song.is_ableton_link_enabled}
 
     def _delete_device(self, track_index, device_index):
-        track = self._song.tracks[track_index]
+        track = self._get_track(track_index)
+        if device_index < 0 or device_index >= len(track.devices):
+            raise IndexError("Device index out of range")
         track.delete_device(device_index)
         return {"track": track.name, "device_count": len(track.devices)}
 
     def _create_take_lane(self, track_index):
-        track = self._song.tracks[track_index]
+        track = self._get_track(track_index)
         track.create_take_lane()
         return {"track": track.name, "take_lane_count": len(track.take_lanes)}
 
@@ -1816,7 +1817,13 @@ class AbletonMCP(ControlSurface):
                 {
                     "index": i,
                     "name": t.name,
-                    "type": "midi" if getattr(t, "has_midi_input", False) else "audio",
+                    "type": (
+                        "midi"
+                        if getattr(t, "has_midi_input", False)
+                        else "audio"
+                        if getattr(t, "has_audio_input", False)
+                        else "group"
+                    ),
                     "muted": bool(t.mute),
                     "soloed": bool(t.solo),
                     "armed": bool(t.arm) if t.can_be_armed else None,
@@ -1834,17 +1841,6 @@ class AbletonMCP(ControlSurface):
             "return_tracks": [t.name for t in song.return_tracks],
             "tracks": tracks,
         }
-
-    def _set_clip_warp(self, track_index, clip_index, params):
-        clip = self._get_clip(track_index, clip_index)
-        applied = {}
-        if "warping" in params:
-            clip.warping = bool(params["warping"])
-            applied["warping"] = clip.warping
-        if "warp_mode" in params:
-            clip.warp_mode = int(params["warp_mode"])
-            applied["warp_mode"] = clip.warp_mode
-        return applied
 
     def _set_simpler_playback_mode(self, track_index, device_index, mode):
         device = self._get_device(track_index, device_index)

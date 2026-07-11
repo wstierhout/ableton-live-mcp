@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5.0
+
+- `analyze_mix`: scan the live set for likely mix problems (several tracks with no
+  headroom, muted or empty tracks, a MIDI track with no instrument, nothing
+  playing).
+- `apply_recipe` / `list_recipes`: scaffold a genre starter (lofi beat, house
+  groove) in one call: set the tempo, add Drums/Bass/Chords tracks, try to load
+  fitting instruments, and write generated parts.
+- `describe_capabilities`: a high-level map of the tool groups and conventions for
+  agent orientation.
+- Removed `set_clip_warp` as redundant: `set_clip_audio` already sets `warping`
+  and `warp_mode`.
+- 130 tools.
+
 ## 1.4.0
 
 - `get_session_snapshot`: the whole set (tempo, time signature, play state, and

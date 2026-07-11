@@ -22,7 +22,7 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from .generators import CHORD_QUALITIES, DRUM_MAP, NOTE_NAMES, _split_progression
+from .generators import CHORD_QUALITIES, DRUM_MAP, NOTE_NAMES, _split_progression, _write_clip
 
 # ── music-theory tables ──────────────────────────────────────────────
 # NOTE_NAMES and CHORD_QUALITIES are reused from generators.py. generators.py
@@ -294,7 +294,7 @@ def chord_voicing(root_pc, quality, style="rootless", center=60, voices=4):
         offsets = [0, third_iv, seventh_iv][:voices]
     else:  # block
         offsets = list(intervals[:voices])
-    return _place(offsets, root_pc, center)
+    return _place(offsets[:voices], root_pc, center)
 
 
 def _voice_lead(voicing, prev):
@@ -330,6 +330,9 @@ def voice_progression(
     Applies smooth voice-leading between chords when ``voice_leading`` is set.
     ``humanize`` adds +/- that much random velocity jitter. Returns note dicts.
     """
+    if beats_per_chord <= 0:
+        raise ValueError("beats_per_chord must be positive")
+    humanize = max(0, humanize)
     rng = random.Random(seed)
     notes = []
     prev = None
@@ -394,6 +397,8 @@ def melody_line(
     contour across each chord; ``density`` (low/medium/high) sets note rate;
     ``swing`` (0.5 straight .. ~0.66) delays off-beats. Returns note dicts.
     """
+    if beats_per_chord <= 0:
+        raise ValueError("beats_per_chord must be positive")
     rng = random.Random(seed)
     step = _DENSITY_STEP.get(density, 0.5)
     scale_notes = scale_pitches(key, scale, low, high)
@@ -467,7 +472,6 @@ def walking_bass(
     beats_per_chord=4.0,
     low=36,
     high=55,
-    swing=0.5,
     ghost=0.15,
     velocity=90,
     seed=None,
@@ -479,8 +483,11 @@ def walking_bass(
     ``ghost`` is the per-offbeat probability of a soft ghost note; ``low``/``high``
     bound the register. Returns note dicts.
     """
+    if beats_per_chord <= 0:
+        raise ValueError("beats_per_chord must be positive")
     rng = random.Random(seed)
     beats = max(1, int(round(beats_per_chord)))
+    base_scale = scale_pitches(key, scale, low, high)
     notes = []
     prev = None
     n = len(chords)
@@ -488,7 +495,7 @@ def walking_bass(
         root_pc, _, intervals = parse_chord_symbol(sym)
         chord_pcs = {(root_pc + iv) % 12 for iv in intervals}
         chord_pitches = [p for p in range(low, high + 1) if p % 12 in chord_pcs]
-        scale_notes = scale_pitches(key, scale, low, high) or chord_pitches
+        scale_notes = base_scale or chord_pitches
         root_pitch = _lowest_with_pc(low, high, root_pc)
         next_root_pc, _, _ = parse_chord_symbol(chords[(i + 1) % n])
         next_root = _lowest_with_pc(low, high, next_root_pc)
@@ -558,6 +565,7 @@ def drum_groove(
     """
     if style not in GROOVE_STYLES:
         raise ValueError(f"unknown style '{style}'. Known: {sorted(GROOVE_STYLES)}")
+    humanize = max(0, humanize)
     rng = random.Random(seed)
     plan = GROOVE_STYLES[style]
     base_vel = {"kick": 104, "snare": 96, "clap": 96, "chat": 52, "ohat": 70, "ride": 60}
@@ -595,6 +603,8 @@ def humanize(notes, timing=0.02, velocity=8, seed=None):
     +/- velocity deviation. Pitches are preserved, times kept non-negative, and
     velocities clamped to 1-127. Deterministic for a fixed ``seed``.
     """
+    timing = max(0.0, timing)
+    velocity = max(0, velocity)
     rng = random.Random(seed)
     out = []
     for n in notes:
@@ -638,22 +648,6 @@ def progression_for_genre(genre, key="C", scale="minor", bars=4):
 # ── wire write path (same commands generators.py uses) ───────────────
 
 
-def _write_clip(track_index, clip_index, length, notes):
-    """Create the clip if the slot is empty, then REPLACE its notes (2 wire calls)."""
-    conn = get_ableton_connection()
-    try:
-        conn.send_command(
-            "create_clip", {"track_index": track_index, "clip_index": clip_index, "length": length}
-        )
-    except Exception as e:
-        if "already" not in str(e).lower() and "has a clip" not in str(e).lower():
-            raise
-    conn.send_command(
-        "add_notes_to_clip", {"track_index": track_index, "clip_index": clip_index, "notes": notes}
-    )
-    return len(notes)
-
-
 # ── tools ────────────────────────────────────────────────────────────
 
 
@@ -688,6 +682,7 @@ def generate_euclidean_drums(
                 f"unknown instrument '{instrument}'. Known: {sorted(DRUM_MAP)} or a MIDI number"
             )
         pitch = int(instrument.strip())
+    humanize = max(0, humanize)
     rng = random.Random(seed)
     step_beats = 4.0 / steps
     notes = []
