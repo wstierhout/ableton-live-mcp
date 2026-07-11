@@ -296,6 +296,8 @@ class AbletonMCP(ControlSurface):
         "set_ableton_link": lambda s, p: s._set_ableton_link(p.get("enabled", True)),
         "delete_device": lambda s, p: s._delete_device(s._req(p, "track_index"), s._req(p, "device_index")),
         "create_take_lane": lambda s, p: s._create_take_lane(s._req(p, "track_index")),
+        "set_clip_warp": lambda s, p: s._set_clip_warp(s._req(p, "track_index"), s._req(p, "clip_index"), p),
+        "set_simpler_playback_mode": lambda s, p: s._set_simpler_playback_mode(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "mode")),
     }
 
     _READONLY_COMMANDS = {
@@ -320,6 +322,7 @@ class AbletonMCP(ControlSurface):
         "get_clip_info": lambda s, p: s._get_clip_info(s._req(p, "track_index"), s._req(p, "clip_index")),
         "get_rack_chains": lambda s, p: s._get_rack_chains(s._req(p, "track_index"), s._req(p, "device_index")),
         "get_drum_pads": lambda s, p: s._get_drum_pads(s._req(p, "track_index"), s._req(p, "device_index")),
+        "get_session_snapshot": lambda s, p: s._get_session_snapshot(),
     }
 
     # Commands whose main-thread work can exceed the default 10 s budget.
@@ -1798,6 +1801,57 @@ class AbletonMCP(ControlSurface):
         track = self._song.tracks[track_index]
         track.create_take_lane()
         return {"track": track.name, "take_lane_count": len(track.take_lanes)}
+
+    def _get_session_snapshot(self):
+        song = self._song
+        tracks = []
+        for i, t in enumerate(song.tracks):
+            clips = sum(1 for s in t.clip_slots if s.has_clip)
+            vol = None
+            try:
+                vol = round(t.mixer_device.volume.value, 3)
+            except Exception:
+                pass
+            tracks.append(
+                {
+                    "index": i,
+                    "name": t.name,
+                    "type": "midi" if getattr(t, "has_midi_input", False) else "audio",
+                    "muted": bool(t.mute),
+                    "soloed": bool(t.solo),
+                    "armed": bool(t.arm) if t.can_be_armed else None,
+                    "volume": vol,
+                    "clips": clips,
+                    "devices": [d.name for d in t.devices],
+                }
+            )
+        return {
+            "tempo": song.tempo,
+            "time_signature": f"{song.signature_numerator}/{song.signature_denominator}",
+            "is_playing": bool(song.is_playing),
+            "track_count": len(song.tracks),
+            "scene_count": len(song.scenes),
+            "return_tracks": [t.name for t in song.return_tracks],
+            "tracks": tracks,
+        }
+
+    def _set_clip_warp(self, track_index, clip_index, params):
+        clip = self._get_clip(track_index, clip_index)
+        applied = {}
+        if "warping" in params:
+            clip.warping = bool(params["warping"])
+            applied["warping"] = clip.warping
+        if "warp_mode" in params:
+            clip.warp_mode = int(params["warp_mode"])
+            applied["warp_mode"] = clip.warp_mode
+        return applied
+
+    def _set_simpler_playback_mode(self, track_index, device_index, mode):
+        device = self._get_device(track_index, device_index)
+        if not hasattr(device, "playback_mode"):
+            raise Exception(f"Device {device_index} on track {track_index} is not a Simpler")
+        device.playback_mode = int(mode)
+        return {"device": device.name, "playback_mode": device.playback_mode}
 
     def _set_arrangement_overdub(self, enabled):
         self._song.arrangement_overdub = bool(enabled)

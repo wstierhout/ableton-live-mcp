@@ -325,3 +325,23 @@ def set_clip_signature(
         },
     )
     return f"Clip signature: {r.get('signature')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_clip_warp(
+    ctx: Context,
+    track_index: int,
+    clip_index: int,
+    warping: bool | None = None,
+    warp_mode: int | None = None,
+) -> str:
+    """Set an audio clip's warping. `warping` toggles warp on/off; `warp_mode`
+    selects the algorithm (0 Beats, 1 Tones, 2 Texture, 3 Re-Pitch, 4 Complex,
+    6 Complex Pro). Audio clips only."""
+    body = {"track_index": track_index, "clip_index": clip_index}
+    if warping is not None:
+        body["warping"] = warping
+    if warp_mode is not None:
+        body["warp_mode"] = warp_mode
+    r = get_ableton_connection().send_command("set_clip_warp", body)
+    return f"Warp set: {r}"
