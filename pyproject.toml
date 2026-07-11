@@ -1,6 +1,6 @@
 [project]
 name = "mcp-server-ableton-live"
-version = "1.0.1"
+version = "1.1.0"
 description = "Ableton Live integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,15 +20,15 @@ dependencies = [
 dev = ["pytest>=8", "ruff>=0.8"]
 
 [project.scripts]
-ableton-live-mcp = "MCP_Server.server:main"
-mcp-server-ableton-live = "MCP_Server.server:main"
+ableton-live-mcp = "ableton_live_mcp.server:main"
+mcp-server-ableton-live = "ableton_live_mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["MCP_Server", "MCP_Server.tools"]
+packages = ["ableton_live_mcp", "ableton_live_mcp.tools", "ableton_live_mcp.remote_script"]
 
 [project.urls]
 "Homepage" = "https://github.com/wstierhout/ableton-live-mcp"
@@ -36,6 +36,10 @@ packages = ["MCP_Server", "MCP_Server.tools"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.format]
+# The Live-side Remote Script keeps its own layout; we lint it but do not restyle it.
+exclude = ["ableton_live_mcp/remote_script/__init__.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]
@@ -45,9 +49,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Live-side script: dispatch-table rows and Live API strings run long.
-"AbletonMCP_Remote_Script/__init__.py" = ["E501"]
+"ableton_live_mcp/remote_script/__init__.py" = ["E501"]
 # Tool docstrings embed long usage examples for the LLM.
-"MCP_Server/tools/*.py" = ["E501"]
+"ableton_live_mcp/tools/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -123,7 +123,8 @@ class AbletonConnection:
                 if not self.sock and not self.connect():
                     raise ConnectionError(
                         "Not connected to Ableton. Start Live, select AbletonMCP as the "
-                        "Control Surface (Settings > Link/Tempo/MIDI), and run `abletonmcp doctor`."
+                        "Control Surface (Settings > Link/Tempo/MIDI), and run "
+                        "`ableton-live-mcp doctor`."
                     )
                 logger.info(f"Sending command: {command_type} with params: {params}")
                 self.sock.sendall(json.dumps(command).encode("utf-8"))
@@ -155,7 +156,7 @@ class AbletonConnection:
             self.sock = None
             raise Exception(
                 f"Connection to Ableton lost ({e}). Is Live still running? "
-                "Run `abletonmcp doctor` to diagnose."
+                "Run `ableton-live-mcp doctor` to diagnose."
             )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON response from Ableton: {str(e)}")

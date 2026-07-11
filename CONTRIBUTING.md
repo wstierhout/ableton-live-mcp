@@ -16,9 +16,9 @@ dispatch tables, and tool registration.
 
 ## Testing against Ableton
 
-Changes to `AbletonMCP_Remote_Script/__init__.py` only take effect after copying the
-file into your User Library Remote Scripts folder and restarting Live, since Live
-scans Remote Scripts at startup.
+Changes to `ableton_live_mcp/remote_script/__init__.py` only take effect after copying
+the file into your User Library Remote Scripts folder (`ableton-live-mcp install` does
+this) and restarting Live, since Live scans Remote Scripts at startup.
 
 ## Notes
 

@@ -4,7 +4,7 @@ import asyncio
 
 
 def test_tool_registration():
-    from MCP_Server.server import mcp
+    from ableton_live_mcp.server import mcp
 
     tools = asyncio.run(mcp.list_tools())
     names = [t.name for t in tools]

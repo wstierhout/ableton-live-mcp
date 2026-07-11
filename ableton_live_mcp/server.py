@@ -1,6 +1,6 @@
-"""AbletonMCP server entrypoint.
+"""Server entrypoint.
 
-Importing MCP_Server.tools registers every @mcp.tool with the FastMCP app.
+Importing ableton_live_mcp.tools registers every @mcp.tool with the FastMCP app.
 """
 
 import logging

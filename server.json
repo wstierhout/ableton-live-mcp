@@ -7,12 +7,12 @@
     "url": "https://github.com/wstierhout/ableton-live-mcp",
     "source": "github"
   },
-  "version": "1.0.1",
+  "version": "1.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-server-ableton-live",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "transport": { "type": "stdio" }
     }
   ]

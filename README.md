@@ -26,7 +26,7 @@ You need Ableton Live 11 or 12, Python 3.10+, and [uv](https://docs.astral.sh/uv
 Claude Code:
 
 ```bash
-claude mcp add AbletonMCP -s user -- uvx --from git+https://github.com/wstierhout/ableton-live-mcp@v1.0.1 ableton-live-mcp
+claude mcp add AbletonMCP -s user -- uvx mcp-server-ableton-live
 ```
 
 Claude Desktop or Cursor, in the `mcpServers` block of the config file:
@@ -36,17 +36,20 @@ Claude Desktop or Cursor, in the `mcpServers` block of the config file:
   "mcpServers": {
     "AbletonMCP": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/wstierhout/ableton-live-mcp@v1.0.1", "ableton-live-mcp"]
+      "args": ["mcp-server-ableton-live"]
     }
   }
 }
 ```
 
+(To run an unreleased revision instead, use
+`uvx --from git+https://github.com/wstierhout/ableton-live-mcp ableton-live-mcp`.)
+
 **2. Install the Remote Script.** This copies the Live-side script into your User
 Library:
 
 ```bash
-uvx --from git+https://github.com/wstierhout/ableton-live-mcp@v1.0.1 ableton-live-mcp install
+uvx mcp-server-ableton-live install
 ```
 
 Then restart Live and set Settings > Link/Tempo/MIDI > Control Surface to `AbletonMCP`
@@ -57,7 +60,7 @@ if the entry does not appear.
 **3. Check the setup.**
 
 ```bash
-uvx --from git+https://github.com/wstierhout/ableton-live-mcp@v1.0.1 ableton-live-mcp doctor
+uvx mcp-server-ableton-live doctor
 ```
 
 **4. Ask for music.** For example: "Make a lofi beat at 80 BPM with a dusty drum kit,
@@ -126,13 +129,15 @@ bind address to a public interface. See [SECURITY.md](SECURITY.md).
 ## Development
 
 ```
-MCP_Server/
-  connection.py    socket client to the Remote Script
+ableton_live_mcp/
+  server.py        entrypoint: runs the MCP server or a setup subcommand
   app.py           FastMCP app, lifecycle, and server instructions
+  connection.py    socket client to the Remote Script
+  cli.py           install / uninstall / doctor subcommands
   tools/           session, tracks, clips, devices, browser, arrangement,
                    generators, prompts
-AbletonMCP_Remote_Script/
-  __init__.py      the Live-side script and its command dispatch tables
+  remote_script/
+    __init__.py    the Live-side script and its command dispatch tables
 tests/             protocol, dispatch-contract, and registration tests
 ```
 

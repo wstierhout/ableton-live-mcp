@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish to PyPI and MCP Registry
 
 on:
   release:
@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uvx ruff check .
-      - run: python3 -m py_compile AbletonMCP_Remote_Script/__init__.py
+      - run: python3 -m py_compile ableton_live_mcp/remote_script/__init__.py
       - run: uv run --extra dev pytest -q
 
   publish:
@@ -26,3 +26,29 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC auth to the MCP Registry
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the version to appear on PyPI
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          for i in $(seq 1 30); do
+            if curl -sf "https://pypi.org/pypi/mcp-server-ableton-live/$VERSION/json" >/dev/null; then
+              echo "mcp-server-ableton-live $VERSION is live on PyPI"; exit 0
+            fi
+            echo "waiting for PyPI ($i/30)..."; sleep 10
+          done
+          echo "PyPI did not publish $VERSION in time"; exit 1
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+      - name: Authenticate to the MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+      - name: Publish to the MCP Registry
+        run: ./mcp-publisher publish

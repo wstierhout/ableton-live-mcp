@@ -1,4 +1,10 @@
-# AbletonMCP/init.py
+"""AbletonMCP Remote Script: the Live-side half of the server.
+
+This module runs inside Ableton Live (imported by Live's Remote Script host, not
+by the MCP server). `ableton-live-mcp install` copies this file into the User
+Library as Remote Scripts/AbletonMCP/__init__.py. It opens a loopback socket on
+port 9877 and dispatches JSON commands to the Live API on the main thread.
+"""
 
 import json
 import os

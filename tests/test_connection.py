@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from MCP_Server.connection import AbletonConnection
+from ableton_live_mcp.connection import AbletonConnection
 
 
 class FakeAbleton:
@@ -83,7 +83,7 @@ def test_chunked_response_reassembly():
 def test_long_running_command_gets_full_timeout(monkeypatch):
     """command_timeout must reach the socket (regression: receive_full_response
     used to clobber it with a hardcoded 15.0)."""
-    import MCP_Server.connection as C
+    import ableton_live_mcp.connection as C
 
     seen = {}
     fake = FakeAbleton(lambda req: {"status": "success", "result": {}})

@@ -14,9 +14,9 @@ jobs:
       - name: Lint
         run: uvx ruff check .
       - name: Format check (server + tests)
-        run: uvx ruff format --check MCP_Server tests
+        run: uvx ruff format --check ableton_live_mcp tests
       - name: Byte-compile remote script
-        run: python3 -m py_compile AbletonMCP_Remote_Script/__init__.py
+        run: python3 -m py_compile ableton_live_mcp/remote_script/__init__.py
 
   test:
     runs-on: ubuntu-latest

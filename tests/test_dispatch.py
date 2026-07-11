@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT_SRC = (ROOT / "AbletonMCP_Remote_Script" / "__init__.py").read_text()
+SCRIPT_SRC = (ROOT / "ableton_live_mcp" / "remote_script" / "__init__.py").read_text()
 SCRIPT_AST = ast.parse(SCRIPT_SRC)
 
 
@@ -58,7 +58,7 @@ def test_every_server_tool_command_is_dispatched():
     """Every send_command(...) in the server tools must exist in the Remote Script."""
     handled = MUTATING.keys() | READONLY.keys()
     sent = set()
-    for path in (ROOT / "MCP_Server").rglob("*.py"):
+    for path in (ROOT / "ableton_live_mcp" / "tools").rglob("*.py"):
         sent |= set(re.findall(r'send_command\(\s*["\']([a-z_]+)["\']', path.read_text()))
     unknown = sent - handled
     assert not unknown, f"server sends commands the Remote Script does not handle: {unknown}"

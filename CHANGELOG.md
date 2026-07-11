@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- The Remote Script now ships inside the package, so `ableton-live-mcp install`
+  copies it from the local install with no network access and always matches the
+  server version.
+- Cleaner internal layout: the Python package is `ableton_live_mcp` and the
+  Live-side script lives at `ableton_live_mcp/remote_script/`.
+- Published to the official MCP Registry as `io.github.wstierhout/ableton-live-mcp`.
+
 ## 1.0.1
 
 Packaging for PyPI. Published to PyPI as `mcp-server-ableton-live`. The run command is
@@ -24,6 +33,6 @@ First public release as a standalone project.
 - `batch_commands` runs several edits in one round trip and one undo step.
 - Server instructions and two workflow prompts (`make_a_beat`, `mix_and_master`)
   so the model learns the conventions before its first call.
-- No telemetry; the server makes no network calls of its own.
+- The server makes no network calls of its own.
 - Tests and CI (lint, Remote Script byte-compile, pytest on 3.10 and 3.12).
 - Verified against Ableton Live 12.4 with a full command sweep.

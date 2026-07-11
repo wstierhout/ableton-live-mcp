@@ -6,14 +6,13 @@ a way to diagnose a broken setup.
 
 import platform
 import socket
-import urllib.request
+from importlib import resources
 from pathlib import Path
 
 from . import __version__
 from .connection import ABLETON_HOST, ABLETON_PORT
 
 SCRIPT_FOLDER = "AbletonMCP"
-RAW_BASE = "https://raw.githubusercontent.com/wstierhout/ableton-live-mcp"
 
 
 def _remote_scripts_dir() -> Path:
@@ -23,21 +22,13 @@ def _remote_scripts_dir() -> Path:
     return home / "Music" / "Ableton" / "User Library" / "Remote Scripts"
 
 
-def _fetch_remote_script() -> bytes:
-    # Pin to this package's exact version so the installed Remote Script always
-    # matches the server (no mutable-branch fallback).
-    url = f"{RAW_BASE}/v{__version__}/AbletonMCP_Remote_Script/__init__.py"
-    try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            if resp.status == 200:
-                return resp.read()
-    except Exception as e:
-        raise RuntimeError(
-            f"Could not download the Remote Script for v{__version__} ({e}). "
-            "Download AbletonMCP_Remote_Script/__init__.py from the repo and copy it "
-            "into your User Library Remote Scripts/AbletonMCP/ folder by hand."
-        ) from e
-    raise RuntimeError(f"Remote Script for v{__version__} not found at {url}")
+def _remote_script_source() -> bytes:
+    # The Remote Script ships inside this package, so install works offline and
+    # the copied script always matches the installed server version. Read it as
+    # data (navigate from the package root) rather than importing it - the module
+    # imports Live's _Framework, which only exists inside Ableton.
+    script = resources.files(__package__).joinpath("remote_script", "__init__.py")
+    return script.read_bytes()
 
 
 def install() -> int:
@@ -51,7 +42,7 @@ def install() -> int:
         )
         return 1
     dest_dir.mkdir(parents=True, exist_ok=True)
-    (dest_dir / "__init__.py").write_bytes(_fetch_remote_script())
+    (dest_dir / "__init__.py").write_bytes(_remote_script_source())
     print(f"Installed the Remote Script to:\n  {dest_dir / '__init__.py'}\n")
     print("Next:")
     print("  1. Restart Ableton Live.")
