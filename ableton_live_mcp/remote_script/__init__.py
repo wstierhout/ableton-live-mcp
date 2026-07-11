@@ -288,6 +288,14 @@ class AbletonMCP(ControlSurface):
         "rack_variation": lambda s, p: s._rack_variation(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "action"), p.get("index")),
         "set_crossfader": lambda s, p: s._set_crossfader(s._req(p, "value")),
         "set_crossfade_assign": lambda s, p: s._set_crossfade_assign(s._req(p, "track_index"), s._req(p, "assign")),
+        "tap_tempo": lambda s, p: s._tap_tempo(),
+        "set_groove_amount": lambda s, p: s._set_groove_amount(s._req(p, "amount")),
+        "set_swing_amount": lambda s, p: s._set_swing_amount(s._req(p, "amount")),
+        "jump_by": lambda s, p: s._jump_by(s._req(p, "beats")),
+        "jump_to_cue": lambda s, p: s._jump_to_cue(p.get("direction", 1)),
+        "set_ableton_link": lambda s, p: s._set_ableton_link(p.get("enabled", True)),
+        "delete_device": lambda s, p: s._delete_device(s._req(p, "track_index"), s._req(p, "device_index")),
+        "create_take_lane": lambda s, p: s._create_take_lane(s._req(p, "track_index")),
     }
 
     _READONLY_COMMANDS = {
@@ -1753,6 +1761,43 @@ class AbletonMCP(ControlSurface):
     def _re_enable_automation(self):
         self._song.re_enable_automation()
         return {"re_enabled": True}
+
+    def _tap_tempo(self):
+        self._song.tap_tempo()
+        return {"tempo": self._song.tempo}
+
+    def _set_groove_amount(self, amount):
+        self._song.groove_amount = max(0.0, min(float(amount), 1.0))
+        return {"groove_amount": self._song.groove_amount}
+
+    def _set_swing_amount(self, amount):
+        self._song.swing_amount = max(0.0, min(float(amount), 1.0))
+        return {"swing_amount": self._song.swing_amount}
+
+    def _jump_by(self, beats):
+        self._song.jump_by(float(beats))
+        return {"current_song_time": self._song.current_song_time}
+
+    def _jump_to_cue(self, direction):
+        if int(direction) < 0:
+            self._song.jump_to_prev_cue()
+        else:
+            self._song.jump_to_next_cue()
+        return {"current_song_time": self._song.current_song_time}
+
+    def _set_ableton_link(self, enabled):
+        self._song.is_ableton_link_enabled = bool(enabled)
+        return {"ableton_link_enabled": self._song.is_ableton_link_enabled}
+
+    def _delete_device(self, track_index, device_index):
+        track = self._song.tracks[track_index]
+        track.delete_device(device_index)
+        return {"track": track.name, "device_count": len(track.devices)}
+
+    def _create_take_lane(self, track_index):
+        track = self._song.tracks[track_index]
+        track.create_take_lane()
+        return {"track": track.name, "take_lane_count": len(track.take_lanes)}
 
     def _set_arrangement_overdub(self, enabled):
         self._song.arrangement_overdub = bool(enabled)

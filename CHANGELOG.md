@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0
+
+- Deeper generators (all seedable, pure music theory): `generate_euclidean_drums`
+  (Bjorklund), `generate_voiced_progression` (rootless, quartal, shell, block jazz
+  voicings with voice-leading), `generate_melody` (nearest-pitch voice-leading,
+  chromatic approach notes, phrase arc), `generate_walking_bass`, `generate_groove`
+  (pocket micro-timing, ghost notes), `generate_genre_progression` (39-genre chord
+  table), and `humanize_clip`. Progressions accept space-, comma-, or dash-separated
+  chords.
+- New Live-side tools: `tap_tempo`, `set_groove_amount`, `set_swing_amount`,
+  `jump_by`, `jump_to_cue`, `set_ableton_link`, `delete_device`, `create_take_lane`.
+- 124 tools total. All new tools verified against Ableton Live 12.
+
 ## 1.2.0
 
 - New `offline` toolset: analyze saved `.als` project files with Live closed.

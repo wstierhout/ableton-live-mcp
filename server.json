@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.wstierhout/ableton-live-mcp",
   "title": "Ableton Live MCP Server",
-  "description": "Control Ableton Live from an AI assistant: 109 tools for building, mixing, and mastering, plus offline .als analysis.",
+  "description": "Control Ableton Live from an AI assistant: 124 tools for building, mixing, and mastering, plus offline .als analysis.",
   "repository": {
     "url": "https://github.com/wstierhout/ableton-live-mcp",
     "source": "github"
   },
-  "version": "1.2.0",
+  "version": "1.3.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-server-ableton-live",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "transport": { "type": "stdio" }
     }
   ]
