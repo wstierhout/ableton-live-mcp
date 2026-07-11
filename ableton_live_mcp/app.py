@@ -54,4 +54,4 @@ INSTRUCTIONS = """Control Ableton Live via a Remote Script socket. Conventions:
 - undo/redo are available; prefer batch_commands so one undo reverts a whole edit.
 """
 
-mcp = FastMCP("AbletonMCP", lifespan=server_lifespan, instructions=INSTRUCTIONS)
+mcp = FastMCP("Ableton Live MCP Server", lifespan=server_lifespan, instructions=INSTRUCTIONS)

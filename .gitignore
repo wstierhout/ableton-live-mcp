@@ -55,6 +55,9 @@ logs/
 .env.local
 .env.*.local
 
+# Internal working notes - keep local, never publish
+docs/
+
 
 # Lock files (optional - uncomment if you don't want to track)
 # uv.lock
