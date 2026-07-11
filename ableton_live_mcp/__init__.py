@@ -1,5 +1,5 @@
 """Ableton Live integration through the Model Context Protocol."""
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 from .connection import AbletonConnection, get_ableton_connection  # noqa: F401

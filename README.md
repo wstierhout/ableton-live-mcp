@@ -8,9 +8,10 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 104 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 109 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
-a running Ableton Live set.
+a running Ableton Live set, plus offline tools that read and diff saved `.als`
+project files with Live closed.
 
 A Remote Script runs inside Live and exposes the Live API over a local socket. The
 MCP server turns that into typed, validated tools that an AI can call correctly,
@@ -77,6 +78,7 @@ an upright bass, and Rhodes chords, then put a limiter on the master at -1 dB."
 | Arrangement | place clips on the timeline, read and delete arrangement clips, write clip automation |
 | Generators | drum patterns in 7 styles, chord progressions, basslines, ASCII drum grids, one-call session setup |
 | Batch | run many edits in one round trip and one undo step |
+| Offline (no Live) | summarize, list tracks, extract MIDI, diff two versions, and lint a saved `.als` file for unfinished work |
 
 There are also two workflow prompts (`make_a_beat`, `mix_and_master`) and a set of
 server instructions that teach the model the conventions before its first call:
@@ -91,10 +93,11 @@ notes, overwrite an arrangement region), so save your work before a big session.
 
 ## Focusing the toolset
 
-The server registers 104 tools. That is a lot for a model to choose from on a small
+The server registers 109 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups: `session`, `tracks`,
-`clips`, `devices`, `browser`, `arrangement`, `generators`. Unset loads everything.
+`clips`, `devices`, `browser`, `arrangement`, `generators`, `offline`. Unset loads
+everything.
 
 ## Conventions
 

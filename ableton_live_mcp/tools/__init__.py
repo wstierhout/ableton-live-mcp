@@ -1,15 +1,27 @@
 """Import selected tool modules so their @mcp.tool decorators register.
 
 Set ABLETON_TOOLSETS to a comma-separated subset to load fewer tools (helps LLMs
-pick the right tool when the full 104-tool surface is more than a task needs),
+pick the right tool when the full tool surface is more than a task needs),
 e.g. ABLETON_TOOLSETS="session,tracks,clips,generators". Default loads all.
-Available: session, tracks, clips, devices, browser, arrangement, generators, prompts.
+Available: session, tracks, clips, devices, browser, arrangement, generators,
+offline, prompts. The `offline` group parses saved .als files and needs no
+running Live.
 """
 
 import importlib
 import os
 
-_ALL = ["session", "tracks", "clips", "devices", "browser", "arrangement", "generators", "prompts"]
+_ALL = [
+    "session",
+    "tracks",
+    "clips",
+    "devices",
+    "browser",
+    "arrangement",
+    "generators",
+    "offline",
+    "prompts",
+]
 
 _requested = os.environ.get("ABLETON_TOOLSETS", "").strip()
 if _requested and _requested.lower() != "all":
