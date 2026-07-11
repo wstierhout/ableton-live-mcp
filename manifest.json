@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ableton-live-mcp",
   "display_name": "Ableton Live",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Control Ableton Live from Claude: build tracks, edit MIDI, load devices, mix, and master.",
   "long_description": "104 tools for driving a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators. Requires a one-time Remote Script install into Ableton (run `ableton-live-mcp install`).",
   "author": {

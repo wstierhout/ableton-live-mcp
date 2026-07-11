@@ -1,32 +1,26 @@
-"""Server entrypoint.
+"""Server entrypoint: run the MCP server, or a setup subcommand.
 
-Importing ableton_live_mcp.tools registers every @mcp.tool with the FastMCP app.
+The tool modules and the FastMCP app are imported inside main(), after the
+subcommand check, so `install`, `uninstall`, `doctor`, and `--version` run
+without loading the full tool surface (or even needing the `mcp` dependency).
 """
 
 import logging
+import sys
 
-from . import tools  # noqa: F401  (tool registration side effect)
-from .app import mcp
+_SUBCOMMANDS = frozenset(
+    {"install", "uninstall", "doctor", "--help", "-h", "help", "--version", "-V", "version"}
+)
 
 
 def main():
-    """Run the MCP server, or a setup subcommand (install/uninstall/doctor)."""
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] in (
-        "install",
-        "uninstall",
-        "doctor",
-        "--help",
-        "-h",
-        "help",
-        "--version",
-        "-V",
-        "version",
-    ):
+    if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
         from . import cli
 
         sys.exit(cli.run(sys.argv[1:]))
+
+    from . import tools  # noqa: F401  (importing registers every @mcp.tool)
+    from .app import mcp
 
     logging.basicConfig(
         level=logging.INFO,

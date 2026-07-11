@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1
+
+- `install`, `uninstall`, `doctor`, and `--version` no longer load the full tool
+  surface, so they run faster and still work if the server dependencies are not
+  importable.
+- The Remote Script port is now configurable with `ABLETON_MCP_PORT` (set the
+  client's `ABLETON_PORT` to match) for hosts where 9877 is taken.
+
 ## 1.1.0
 
 - The Remote Script now ships inside the package, so `ableton-live-mcp install`

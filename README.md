@@ -115,7 +115,9 @@ task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
   exactly `AbletonMCP`, and Live only scans scripts at startup, so restart it.
 - Every command times out: a dialog is open in Live and it blocks the script. On the
   trial, that is the startup nag. Dismiss it and retry.
-- Port 9877 is not listening: Live is not running, or the Control Surface is not set.
+- Port 9877 is not listening: Live is not running, or the Control Surface is not
+  set. If another program already uses 9877, set `ABLETON_MCP_PORT` in Live's
+  launch environment and `ABLETON_PORT` for the server so both sides match.
 - You cannot export or freeze from a tool: Live's API has no render or freeze
   function, so those stay manual. For rendered audio, export with the shortcut and
   analyse the file separately.

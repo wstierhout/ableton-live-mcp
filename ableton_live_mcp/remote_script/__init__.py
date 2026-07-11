@@ -16,11 +16,11 @@ import traceback
 
 from _Framework.ControlSurface import ControlSurface
 
-# Constants for socket communication
-DEFAULT_PORT = 9877
-# Bind loopback only by default - port 9877 drives Live with no auth, so it
-# must not be exposed to the network. Override with ABLETON_MCP_HOST for
-# advanced setups (e.g. containerized clients) at your own risk.
+# Socket the script listens on. Bind loopback only by default - this port drives
+# Live with no auth, so it must not be exposed to the network. If 9877 is taken,
+# set ABLETON_MCP_PORT (and the client's ABLETON_PORT to match). ABLETON_MCP_HOST
+# overrides the bind address for advanced setups (e.g. containers) at your own risk.
+DEFAULT_PORT = int(os.environ.get("ABLETON_MCP_PORT", "9877"))
 HOST = os.environ.get("ABLETON_MCP_HOST", "127.0.0.1")
 
 def create_instance(c_instance):
