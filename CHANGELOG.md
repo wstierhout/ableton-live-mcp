@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- New `offline` toolset: analyze saved `.als` project files with Live closed.
+  `als_summary`, `als_list_tracks`, `als_extract_midi`, `als_diff` (compare two
+  versions), and `als_find_unfinished` (lint for missing instruments, empty or
+  muted tracks, no master limiter). Pure standard library, no Live connection.
+- 109 tools total.
+
 ## 1.1.1
 
 - `install`, `uninstall`, `doctor`, and `--version` no longer load the full tool
