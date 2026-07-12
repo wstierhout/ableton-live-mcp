@@ -155,8 +155,8 @@ uv run --extra dev pytest      # tests
 uvx ruff check .               # lint
 ```
 
-CI runs lint, a byte-compile of the Remote Script, and the tests on Python 3.10 and
-3.12.
+CI runs lint, a byte-compile of the Remote Script, and tests on Python 3.10, 3.12,
+3.13, and 3.14.
 
 ## Frequently asked questions
 
@@ -194,4 +194,5 @@ endorsed by Ableton.
 ## Credits and license
 
 MIT licensed, maintained by [Wouter Stierhout](https://github.com/wstierhout).
-See `LICENSE`. Not affiliated with Ableton.
+See `LICENSE`. Ableton and Live are trademarks of Ableton AG. This independent
+open-source project is not affiliated with or endorsed by Ableton AG.
