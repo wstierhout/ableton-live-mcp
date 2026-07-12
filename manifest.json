@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "ableton-live-mcp",
   "display_name": "Ableton Live",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Control Ableton Live from Claude: build tracks, edit MIDI, load devices, mix, and master.",
-  "long_description": "153 tools for driving a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators, plus offline tools that read and diff saved .als files with Live closed. Requires a one-time Remote Script install into Ableton (run `ableton-live-mcp install`).",
+  "long_description": "154 tools for driving a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators, plus offline tools that read and diff saved .als files with Live closed. Requires a one-time Remote Script install into Ableton (run `ableton-live-mcp install`).",
   "author": {
     "name": "Wouter Stierhout",
     "url": "https://github.com/wstierhout"
@@ -28,7 +28,7 @@
     "toolsets": {
       "type": "string",
       "title": "Toolsets",
-      "description": "Comma-separated tool groups to load, or 'all'. Groups: session, tracks, clips, devices, browser, arrangement, generators.",
+      "description": "Comma-separated tool groups to load, or 'all'. Groups: session, tracks, clips, devices, browser, arrangement, generators, audio, analysis, offline, recipes.",
       "required": false,
       "default": "all"
     }

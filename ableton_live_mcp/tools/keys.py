@@ -20,7 +20,7 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from .offline import _load
+from ._als_parse import _load
 
 # Krumhansl-Kessler key profiles: the perceived tonal hierarchy of the 12
 # scale degrees, indexed from the tonic (index 0). These are the canonical
@@ -154,6 +154,9 @@ def _normalize_notes(raw_notes):
         pitch = note.get("pitch")
         if pitch is None:
             continue
+        if note.get("mute"):
+            # Deactivated notes are inaudible; they must not skew the key.
+            continue
         start = note.get("start_time", note.get("start", 0.0))
         out.append(
             {
@@ -161,7 +164,6 @@ def _normalize_notes(raw_notes):
                 "start_time": float(start or 0.0),
                 "duration": float(note.get("duration", 0.0) or 0.0),
                 "velocity": float(note.get("velocity", 0.0) or 0.0),
-                "mute": bool(note.get("mute", False)),
             }
         )
     return out

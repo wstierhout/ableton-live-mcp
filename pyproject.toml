@@ -1,6 +1,6 @@
 [project]
 name = "mcp-server-ableton-live"
-version = "1.7.1"
+version = "1.7.2"
 description = "Ableton Live integration through the Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ ableton-live-mcp = "ableton_live_mcp.server:main"
 mcp-server-ableton-live = "ableton_live_mcp.server:main"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

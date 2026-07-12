@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 153 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 154 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
 a running Ableton Live set, plus offline tools that read and diff saved `.als`
 project files with Live closed.
@@ -96,7 +96,7 @@ notes, overwrite an arrangement region), so save your work before a big session.
 
 ## Focusing the toolset
 
-The server registers 153 tools. That is a lot for a model to choose from on a small
+The server registers 154 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups (each may span several modules): `session`, `tracks`, `clips`, `devices`,
 `browser`, `arrangement`, `generators`, `audio`, `analysis`, `offline`, `recipes`.

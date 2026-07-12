@@ -15,18 +15,15 @@ layout is undocumented and shifts between Live versions, so parsing is best-
 effort and tolerant: missing fields become ``None`` rather than raising.
 """
 
-import gzip
 import json
 import os
 import re
-import zlib
-from xml.etree import ElementTree as ET
 
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-from ._als_xml import _afloat, _aint, _flag, _fnum, _inum, _val
+from ._als_xml import _afloat, _aint, _flag, _fnum, _inum, _val, load_gz_xml
 
 # Group device tag -> the branch-preset tag that holds its chains.
 _BRANCH_TYPE = {
@@ -136,7 +133,6 @@ _SUITE_ONLY = {
     "instrumentvector",
     "echo",
     "hybridreverb",
-    "drift",
     "meld",
     "granulator",
     "granulatoriii",
@@ -158,40 +154,22 @@ _SUITE_ONLY = {
     "resonators",
     "vocoder",
     "spectralresonator",
+    # Max for Live devices load only in Suite (or Standard + the M4L add-on).
+    "mxdeviceinstrument",
+    "mxdeviceaudioeffect",
+    "mxdevicemidieffect",
+    "maxinstrument",
+    "maxaudioeffect",
+    "maxmidieffect",
 }
 _STANDARD_ONLY = {
     "eqeight",
-    "eqthree",
-    "compressor",
-    "simpler",
-    "originalsimpler",
-    "impulse",
-    "drumrack",
-    "drumgroupdevice",
     "drumsampler",
     "drumcell",
-    "autofilter",
-    "autopan",
-    "reverb",
-    "delay",
-    "graindelay",
-    "filterdelay",
-    "chorus",
-    "chorusensemble",
-    "phaser",
-    "phaserflanger",
-    "flanger",
-    "gate",
-    "limiter",
-    "saturator",
     "overdrive",
-    "redux",
-    "beatrepeat",
-    "looper",
     "gluecompressor",
     "drumbuss",
     "multibanddynamics",
-    "utility",
     "shifter",
 }
 
@@ -345,7 +323,7 @@ def _drum_pad_fields(branch):
     (a Golden-Era kick at ReceivingNote 92 lands on note 36 = C1)."""
     fields = {}
     recv = _inum(branch.find(".//ReceivingNote"))
-    midi = 128 - recv if recv is not None else None
+    midi = 128 - recv if recv is not None and 0 <= 128 - recv <= 127 else None
     fields["receiving_note"] = recv
     fields["midi_note"] = midi
     fields["note_name"] = _note_name(midi)
@@ -448,8 +426,12 @@ def _drum_pads(root):
     return pads
 
 
+_AUDIO_EXTS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".flac", ".ogg", ".m4a", ".wv", ".opus"}
+
+
 def _all_samples(root):
-    """Every distinct sample referenced anywhere in the preset."""
+    """Every distinct audio sample referenced anywhere in the preset. Non-audio
+    FileRefs (e.g. a Max device's .amxd) are not samples and are skipped."""
     seen = set()
     samples = []
     for ref in root.iter("FileRef"):
@@ -458,6 +440,8 @@ def _all_samples(root):
         if name is None and rel:
             name = rel.rsplit("/", 1)[-1]
         if name is None and rel is None:
+            continue
+        if os.path.splitext(name or rel or "")[1].lower() not in _AUDIO_EXTS:
             continue
         key = (name, rel)
         if key in seen:
@@ -470,24 +454,19 @@ def _all_samples(root):
 # ── top-level parse ──
 
 
-def _parse(path, detail=False):
-    """Parse an .adg/.adv path into a plain dict. Raises OSError /
-    gzip.BadGzipFile / zlib.error / ET.ParseError for _load to translate. When
-    `detail` is set, also extract the (full-tree-walk) macro mappings and drum-pad
-    map that only adg_analyze needs."""
-    with gzip.open(path, "rb") as f:
-        root = ET.fromstring(f.read())
-
-    ableton = root if root.tag == "Ableton" else root.find(".//Ableton")
-    if ableton is None:
-        ableton = root
-    version_major = ableton.get("MajorVersion")
-    version_minor = ableton.get("MinorVersion")
-    creator = ableton.get("Creator")
+def _parse_root(root, path, detail=False):
+    """Extract a plain dict from a parsed <Ableton> root. When `detail` is set,
+    also extract the (full-tree-walk) macro mappings and drum-pad map that only
+    adg_analyze needs."""
+    version_major = root.get("MajorVersion")
+    version_minor = root.get("MinorVersion")
+    creator = root.get("Creator")
 
     group = root.find("GroupDevicePreset")
     if group is None:
         group = root.find(".//GroupDevicePreset")
+    # True when the preset is or wraps a drum rack: factory kits ship as an
+    # Instrument Rack whose branch holds the DrumGroupDevice.
     is_drum_rack = next(root.iter("DrumGroupDevice"), None) is not None
 
     if group is not None:
@@ -554,17 +533,10 @@ def _parse(path, detail=False):
 
 def _load(path, detail=False):
     """Parse with a friendly error string on failure. Returns (data, error)."""
-    path = os.path.expanduser(path)
-    if not os.path.isfile(path):
-        return None, f"No file at {path}. Pass the full path to a .adg or .adv file."
-    try:
-        return _parse(path, detail=detail), None
-    except (gzip.BadGzipFile, EOFError, zlib.error):
-        return None, f"{path} is not a valid gzip-compressed .adg/.adv file."
-    except ET.ParseError as e:
-        return None, f"Could not parse the preset XML in {path}: {e}"
-    except OSError as e:
-        return None, f"Could not read {path}: {e}"
+    root, path, err = load_gz_xml(path, noun=".adg/.adv")
+    if err:
+        return None, err
+    return _parse_root(root, path, detail=detail), None
 
 
 # ── tools ──
@@ -575,7 +547,9 @@ def adg_summary(ctx: Context, path: str) -> str:
     """Summarize a saved .adg rack or .adv device preset WITHOUT Live running:
     name, rack type, total device count, top-level chain count, named-macro
     count, required Live edition (intro/standard/suite), and whether it is a drum
-    rack. `path` is a filesystem path to a .adg or .adv file."""
+    kit (`is_drum_rack` is true when the preset is or wraps a Drum Rack — factory
+    kits ship wrapped in an Instrument Rack). `path` is a filesystem path to a
+    .adg or .adv file."""
     data, err = _load(path)
     if err:
         raise ValueError(err)

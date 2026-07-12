@@ -90,9 +90,9 @@ def test_long_running_command_gets_full_timeout(monkeypatch):
     conn = AbletonConnection(host="127.0.0.1", port=fake.port)
     orig = conn.receive_full_response
 
-    def spy(sock, timeout=15.0, buffer_size=8192):
-        seen["t"] = timeout
-        return orig(sock, timeout=timeout, buffer_size=buffer_size)
+    def spy(buffer_size=8192):
+        seen["t"] = conn.sock.gettimeout()
+        return orig(buffer_size=buffer_size)
 
     try:
         conn.receive_full_response = spy
@@ -131,6 +131,110 @@ def test_concurrent_calls_do_not_interleave():
             t.join()
         assert not errors, errors
         assert all(sent == echoed for sent, echoed in results)
+    finally:
+        conn.disconnect()
+        fake.close()
+
+
+def test_timeout_reports_modal_dialog_hint(monkeypatch):
+    """A silent Live must surface the modal-dialog guidance (regression: the
+    receive loop used to swallow TimeoutError into a generic message) and the
+    dead socket must be closed, not leaked."""
+    import ableton_live_mcp.connection as C
+
+    def never_respond(req):
+        import time as t
+
+        t.sleep(10)
+        return {"status": "success", "result": {}}
+
+    monkeypatch.setattr(C, "REMOTE_DEFAULT_TIMEOUT", 0.1)
+    monkeypatch.setattr(C, "SOCKET_HEADROOM", 0.1)
+    fake = FakeAbleton(never_respond)
+    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
+    try:
+        with pytest.raises(C.AbletonTimeoutError, match="modal dialog"):
+            conn.send_command("get_session_info")
+        assert conn.sock is None  # closed, ready for a clean reconnect
+    finally:
+        conn.disconnect()
+        fake.close()
+
+
+def test_app_level_error_keeps_connection_open():
+    """A status=error reply is an application error, not a transport failure:
+    the same socket must serve the next command without reconnecting."""
+    import ableton_live_mcp.connection as C
+
+    calls = {"n": 0}
+
+    def responder(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"status": "error", "message": "no such track"}
+        return {"status": "success", "result": {"ok": True}}
+
+    fake = FakeAbleton(responder)
+    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
+    try:
+        with pytest.raises(C.AbletonCommandError, match="no such track"):
+            conn.send_command("get_track_info", {"track_index": 99})
+        sock_before = conn.sock
+        assert sock_before is not None
+        assert conn.send_command("get_session_info") == {"ok": True}
+        assert conn.sock is sock_before  # same socket, no reconnect
+    finally:
+        conn.disconnect()
+        fake.close()
+
+
+def test_connection_closed_mid_response():
+    """The peer dying mid-frame must raise the connection-lost error and close
+    the local socket."""
+    import ableton_live_mcp.connection as C
+
+    class DyingAbleton(FakeAbleton):
+        def _serve(self):
+            conn, _ = self.server.accept()
+            conn.recv(8192)
+            conn.sendall(b'{"status": "succ')  # partial frame
+            conn.close()
+
+    fake = DyingAbleton(lambda req: None)
+    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
+    try:
+        with pytest.raises(C.AbletonConnectionLostError, match="Connection to Ableton lost"):
+            conn.send_command("get_session_info")
+        assert conn.sock is None
+    finally:
+        conn.disconnect()
+        fake.close()
+
+
+def test_multibyte_utf8_split_across_chunks():
+    """A multibyte character straddling two TCP sends must not abort the
+    receive loop (regression: UnicodeDecodeError used to kill the command)."""
+
+    class SplitAbleton(FakeAbleton):
+        def _serve(self):
+            import time as t
+
+            conn, _ = self.server.accept()
+            conn.recv(8192)
+            payload = json.dumps(
+                {"status": "success", "result": {"name": "Träck \U0001f3b9"}}
+            ).encode("utf-8")
+            # Split inside the last multibyte character.
+            cut = len(payload) - 3
+            conn.sendall(payload[:cut])
+            t.sleep(0.05)
+            conn.sendall(payload[cut:])
+
+    fake = SplitAbleton(lambda req: None)
+    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
+    try:
+        result = conn.send_command("get_track_info")
+        assert result["name"] == "Träck \U0001f3b9"
     finally:
         conn.disconnect()
         fake.close()

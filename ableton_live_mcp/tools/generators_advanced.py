@@ -22,7 +22,16 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from .generators import CHORD_QUALITIES, DRUM_MAP, NOTE_NAMES, _split_progression, _write_clip
+from .generators import (
+    CHORD_QUALITIES,
+    DRUM_MAP,
+    NOTE_NAMES,
+    _clamp_pitch,
+    _note,
+    _split_progression,
+    _write_clip,
+    parse_chord_symbol,
+)
 
 # ── music-theory tables ──────────────────────────────────────────────
 # NOTE_NAMES and CHORD_QUALITIES are reused from generators.py. generators.py
@@ -114,53 +123,6 @@ GENRE_PROGRESSIONS = {
     "psytrance": [(0, "m"), (0, "m"), (6, ""), (5, "")],
     "hardstyle": [(0, "m"), (5, ""), (6, ""), (0, "m")],
 }
-
-
-# ── note construction + parsing helpers ──────────────────────────────
-
-
-def _clamp_pitch(p):
-    return max(0, min(127, int(round(p))))
-
-
-def _clamp_vel(v):
-    return max(1, min(127, int(round(v))))
-
-
-def _note(pitch, start, dur, vel, mute=False):
-    """Build a note in the project's standard dict shape, clamped to valid MIDI.
-
-    Pitch -> 0-127, velocity -> 1-127, start_time kept non-negative, duration
-    kept non-negative.
-    """
-    return {
-        "pitch": _clamp_pitch(pitch),
-        "start_time": round(max(0.0, float(start)), 4),
-        "duration": round(max(0.0, float(dur)), 4),
-        "velocity": _clamp_vel(vel),
-        "mute": bool(mute),
-    }
-
-
-def parse_chord_symbol(symbol):
-    """'Am9' -> (9, 'm9', [0, 3, 7, 10, 14]); 'F#maj7' -> (6, 'maj7', ...).
-
-    Returns (root_pitch_class, quality_suffix, intervals). Reuses generators.py's
-    NOTE_NAMES and CHORD_QUALITIES so the vocabulary matches the rest of the tools.
-    """
-    s = symbol.strip()
-    if not s:
-        raise ValueError("empty chord symbol")
-    root = s[0].upper()
-    rest = s[1:]
-    if rest[:1] in ("#", "b", "B"):
-        root += "#" if rest[0] == "#" else "B"
-        rest = rest[1:]
-    if root not in NOTE_NAMES:
-        raise ValueError(f"unknown chord root in '{symbol}'")
-    if rest not in CHORD_QUALITIES:
-        raise ValueError(f"unknown chord quality '{rest}' in '{symbol}'")
-    return NOTE_NAMES[root], rest, CHORD_QUALITIES[rest]
 
 
 def _parse_note_name(name):
@@ -291,9 +253,24 @@ def chord_voicing(root_pc, quality, style="rootless", center=60, voices=4):
     center biases where the voicing sits (60 = C3 in Live's naming); voices caps
     the number of notes.
     """
-    intervals = CHORD_QUALITIES.get(quality, CHORD_QUALITIES[""])
-    third_iv = 3 if 3 in intervals else 4
-    seventh_iv = 11 if 11 in intervals else 10
+    if quality not in CHORD_QUALITIES:
+        raise ValueError(f"Unknown chord quality '{quality}'. Known: {sorted(CHORD_QUALITIES)}")
+    if style not in ("rootless", "quartal", "shell", "block"):
+        raise ValueError(f"Unknown voicing style '{style}'. Known: rootless, quartal, shell, block")
+    intervals = CHORD_QUALITIES[quality]
+    # The tone a voicing leans on instead of the 3rd: minor/major 3rd, else the
+    # sus 4th/2nd (a sus chord must not gain a major 3rd).
+    third_iv = next((iv for iv in (3, 4, 5, 2) if iv in intervals), 4)
+    # dim7 stores its bb7 as 9 next to the b5; a bare 9 (as in maj6) is a 6th,
+    # not a 7th, so require the b5 alongside it.
+    if 11 in intervals:
+        seventh_iv = 11
+    elif 10 in intervals:
+        seventh_iv = 10
+    elif 9 in intervals and 6 in intervals:
+        seventh_iv = 9
+    else:
+        seventh_iv = 10
     fifth_iv = 6 if 6 in intervals else (8 if 8 in intervals else 7)
 
     voices = max(1, int(voices))
@@ -367,6 +344,7 @@ def voice_progression(
 # ── 3. Melody (voice-leading + chromatic approach + phrase arc) ───────
 
 _DENSITY_STEP = {"low": 1.0, "medium": 0.5, "high": 0.25}
+_PHRASE_ARCS = ("rising", "arch", "ascend_descend", "static")
 
 
 def _phrase_arc(arc, idx, n):
@@ -414,8 +392,12 @@ def melody_line(
     """
     if beats_per_chord <= 0:
         raise ValueError("beats_per_chord must be positive")
+    if density not in _DENSITY_STEP:
+        raise ValueError(f"Unknown density '{density}'. Known: {sorted(_DENSITY_STEP)}")
+    if phrase_arc not in _PHRASE_ARCS:
+        raise ValueError(f"Unknown phrase_arc '{phrase_arc}'. Known: {', '.join(_PHRASE_ARCS)}")
     rng = random.Random(seed)
-    step = _DENSITY_STEP.get(density, 0.5)
+    step = _DENSITY_STEP[density]
     scale_notes = scale_pitches(key, scale, low, high)
     if not scale_notes:
         return []
@@ -658,9 +640,6 @@ def progression_for_genre(genre, key="C", scale="minor", bars=4):
         pc = (root + intervals[degree % len(intervals)]) % 12
         chords.append(PITCH_NAMES[pc] + quality)
     return chords
-
-
-# ── wire write path (same commands generators.py uses) ───────────────
 
 
 # ── tools ────────────────────────────────────────────────────────────

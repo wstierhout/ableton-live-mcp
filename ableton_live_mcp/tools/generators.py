@@ -11,7 +11,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-from ..connection import get_ableton_connection
+from ..connection import AbletonCommandError, get_ableton_connection
 
 # ── music theory tables ──────────────────────────────────────────────
 
@@ -130,22 +130,33 @@ def _split_progression(progression):
     return symbols
 
 
-def _parse_chord(symbol):
-    """'Am9' -> (9, [0,3,7,10,14]); 'F#maj7' -> (6, ...)."""
-    symbol = symbol.strip()
-    root = symbol[0].upper()
-    rest = symbol[1:]
-    if rest[:1] in ("#", "b"):
+def parse_chord_symbol(symbol):
+    """'Am9' -> (9, 'm9', [0, 3, 7, 10, 14]); 'F#maj7' -> (6, 'maj7', ...).
+
+    Returns (root_pitch_class, quality_suffix, intervals). The single chord
+    parser for the whole package; flats accept 'b' or 'B' ('Bb7' == 'BB7').
+    """
+    s = symbol.strip()
+    if not s:
+        raise ValueError("Empty chord symbol")
+    root = s[0].upper()
+    rest = s[1:]
+    if rest[:1] in ("#", "b", "B"):
         root += "#" if rest[0] == "#" else "B"
         rest = rest[1:]
     if root not in NOTE_NAMES:
         raise ValueError(f"Unknown chord root in '{symbol}'")
-    quality = rest
-    if quality not in CHORD_QUALITIES:
+    if rest not in CHORD_QUALITIES:
         raise ValueError(
-            f"Unknown chord quality '{quality}' in '{symbol}'. Known: {sorted(CHORD_QUALITIES)}"
+            f"Unknown chord quality '{rest}' in '{symbol}'. Known: {sorted(CHORD_QUALITIES)}"
         )
-    return NOTE_NAMES[root], CHORD_QUALITIES[quality]
+    return NOTE_NAMES[root], rest, CHORD_QUALITIES[rest]
+
+
+def _parse_chord(symbol):
+    """'Am9' -> (9, [0,3,7,10,14]); 'F#maj7' -> (6, ...)."""
+    root_pc, _quality, intervals = parse_chord_symbol(symbol)
+    return root_pc, intervals
 
 
 def _voice(root_pc, intervals, center=60):
@@ -165,26 +176,56 @@ def _voice(root_pc, intervals, center=60):
     return sorted(set(pitches))
 
 
-def _note(pitch, start, dur, vel):
+def _clamp_pitch(p):
+    return max(0, min(127, int(round(p))))
+
+
+def _clamp_vel(v):
+    return max(1, min(127, int(round(v))))
+
+
+def _note(pitch, start, dur, vel, mute=False):
+    """Build a note in the project's standard dict shape, clamped to valid MIDI.
+
+    The single note constructor for the whole package (generators_advanced and
+    motif import it): pitch -> 0-127, velocity -> 1-127, start_time and
+    duration kept non-negative, rounded to 4 dp.
+    """
     return {
-        "pitch": int(pitch),
-        "start_time": round(start, 4),
-        "duration": round(dur, 4),
-        "velocity": int(max(1, min(127, vel))),
-        "mute": False,
+        "pitch": _clamp_pitch(pitch),
+        "start_time": round(max(0.0, float(start)), 4),
+        "duration": round(max(0.0, float(dur)), 4),
+        "velocity": _clamp_vel(vel),
+        "mute": bool(mute),
     }
 
 
 def _write_clip(track_index, clip_index, length, notes):
-    """Create the clip if the slot is empty, then REPLACE its notes (2 wire calls)."""
+    """Create the clip if the slot is empty (resize it if not), then REPLACE its
+    notes. 2-3 wire calls."""
     conn = get_ableton_connection()
     try:
         conn.send_command(
             "create_clip", {"track_index": track_index, "clip_index": clip_index, "length": length}
         )
-    except Exception as e:
+    except AbletonCommandError as e:
+        # Only Live's own "slot occupied" refusal reaches here; transport
+        # errors propagate instead of being mistaken for it.
         if "already" not in str(e).lower() and "has a clip" not in str(e).lower():
             raise
+        # The slot already had a clip: resize its loop so a longer/shorter
+        # pattern does not play against the stale loop length.
+        conn.send_command(
+            "set_clip_loop",
+            {
+                "track_index": track_index,
+                "clip_index": clip_index,
+                "start": 0.0,
+                "end": float(length),
+                "start_marker": 0.0,
+                "end_marker": float(length),
+            },
+        )
     conn.send_command(
         "add_notes_to_clip", {"track_index": track_index, "clip_index": clip_index, "notes": notes}
     )
@@ -215,6 +256,8 @@ def generate_drum_pattern(
     """
     if style not in DRUM_STYLES:
         raise ValueError(f"Unknown style '{style}'. Known: {sorted(DRUM_STYLES)}")
+    bars = max(1, int(bars))
+    humanize = max(0, int(humanize))
     rng = random.Random(seed)
     notes = []
     for bar in range(bars):
@@ -263,7 +306,10 @@ def generate_chord_progression(
                 (t0 + beats_per_chord * 0.625, beats_per_chord * 0.2, velocity - 14),
             ]
         elif rhythm == "quarters":
-            hits = [(t0 + q, 0.9, velocity - (q % 2) * 12) for q in range(int(beats_per_chord))]
+            hits = [
+                (t0 + q, 0.9, velocity - (q % 2) * 12)
+                for q in range(max(1, round(beats_per_chord)))
+            ]
         else:
             raise ValueError("rhythm must be held | stabs | quarters")
         for start, dur, vel in hits:
@@ -291,6 +337,8 @@ def generate_bassline(
     "walking" (root, approach tones), "eighth_pump" (driving 8ths on the root).
     octave: 1 = very low (C1=24), 2 = typical bass (C2=36).
     """
+    if not 0 <= octave <= 8:
+        raise ValueError(f"octave must be 0-8 (2 = typical bass), got {octave}")
     symbols = _split_progression(progression)
     base = 12 * (octave + 1)
     notes = []
@@ -365,6 +413,8 @@ def write_drum_grid(
                     f"Unknown instrument '{name}'. Known: {sorted(DRUM_MAP)} or a MIDI number"
                 )
             pitch = int(name)
+            if pitch > 127:
+                raise ValueError(f"MIDI number {pitch} out of range 0-127 in grid row '{name}'")
         max_steps = max(max_steps, len(pattern))
         for step, ch in enumerate(pattern):
             if ch in VEL:

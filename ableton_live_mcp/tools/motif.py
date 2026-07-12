@@ -27,8 +27,7 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from .generators import _write_clip
-from .generators_advanced import _note
+from .generators import _note, _write_clip
 
 
 def _mute_of(n):
@@ -153,6 +152,9 @@ def additive(notes, steps):
     """
     if not notes:
         return []
+    # Clip notes arrive in whatever order Live returns them; "first i notes"
+    # only makes musical sense in time order.
+    notes = sorted(notes, key=lambda n: n["start_time"])
     m = min(len(notes), max(1, int(steps)))
     base = notes[0]["start_time"]
     out = []

@@ -6,26 +6,26 @@ without loading the full tool surface (or even needing the `mcp` dependency).
 """
 
 import logging
+import os
 import sys
-
-_SUBCOMMANDS = frozenset(
-    {"install", "uninstall", "doctor", "--help", "-h", "help", "--version", "-V", "version"}
-)
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
+    if len(sys.argv) > 1:
+        # Forward every subcommand to the CLI - including unknown ones, so a
+        # typo prints usage instead of silently blocking on the stdio server.
         from . import cli
 
         sys.exit(cli.run(sys.argv[1:]))
 
+    logging.basicConfig(
+        level=os.environ.get("ABLETON_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
     from . import tools  # noqa: F401  (importing registers every @mcp.tool)
     from .app import mcp
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
     mcp.run()
 
 

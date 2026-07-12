@@ -6,6 +6,7 @@ Library as Remote Scripts/AbletonMCP/__init__.py. It opens a loopback socket on
 port 9877 and dispatches JSON commands to the Live API on the main thread.
 """
 
+import codecs
 import json
 import os
 import queue
@@ -22,6 +23,7 @@ from _Framework.ControlSurface import ControlSurface
 # overrides the bind address for advanced setups (e.g. containers) at your own risk.
 DEFAULT_PORT = int(os.environ.get("ABLETON_MCP_PORT", "9877"))
 HOST = os.environ.get("ABLETON_MCP_HOST", "127.0.0.1")
+MAX_REQUEST_BYTES = 10 * 1024 * 1024  # backstop against a poisoned request buffer
 
 def create_instance(c_instance):
     """Create and return the AbletonMCP script instance"""
@@ -38,8 +40,11 @@ class AbletonMCP(ControlSurface):
         # Socket server for communication
         self.server = None
         self.client_threads = []
+        self.client_sockets = []
         self.server_thread = None
         self.running = False
+        # __init__ runs on Live's main thread; used to detect direct dispatch.
+        self._main_thread = threading.current_thread()
 
         # Cache the song reference for easier access
         self._song = self.song()
@@ -49,8 +54,10 @@ class AbletonMCP(ControlSurface):
 
         self.log_message("AbletonMCP initialized")
 
-        # Show a message in Ableton
-        self.show_message("AbletonMCP: Listening for commands on port " + str(DEFAULT_PORT))
+        # Show a message in Ableton (only if the server actually started -
+        # start_server shows its own error otherwise).
+        if self.running:
+            self.show_message("AbletonMCP: Listening for commands on port " + str(DEFAULT_PORT))
 
     def disconnect(self):
         """Called when Ableton closes or the control surface is removed"""
@@ -63,6 +70,15 @@ class AbletonMCP(ControlSurface):
                 self.server.close()
             except:
                 pass
+
+        # Close client sockets so threads blocked in recv() wake up and exit;
+        # otherwise a reloaded script leaves the old thread serving a stale song.
+        for client_sock in self.client_sockets[:]:
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+        self.client_sockets = []
 
         # Wait for the server thread to exit
         if self.server_thread and self.server_thread.is_alive():
@@ -108,6 +124,7 @@ class AbletonMCP(ControlSurface):
                     client, address = self.server.accept()
                     self.log_message("Connection accepted from " + str(address))
                     self.show_message("AbletonMCP: Client connected")
+                    self.client_sockets.append(client)
 
                     # Handle client in a separate thread
                     client_thread = threading.Thread(
@@ -135,10 +152,25 @@ class AbletonMCP(ControlSurface):
         except Exception as e:
             self.log_message("Server thread error: " + str(e))
 
+    def _send_response(self, client, response):
+        """Serialize and send one response, surviving unserializable results."""
+        try:
+            payload = json.dumps(response)
+        except (TypeError, ValueError) as e:
+            self.log_message("Unserializable handler result: " + str(e))
+            payload = json.dumps({"status": "error",
+                                  "message": "Handler returned an unserializable result: " + str(e)})
+        client.sendall(payload.encode("utf-8"))
+
     def _handle_client(self, client):
         """Handle communication with a connected client"""
         self.log_message("Client handler started")
         client.settimeout(None)  # No timeout for client socket
+        decoder = json.JSONDecoder()
+        # An 8192-byte read can split a multibyte UTF-8 character; the
+        # incremental decoder holds the partial bytes until the rest arrives,
+        # at linear cost (no whole-buffer re-decode per chunk).
+        utf8 = codecs.getincrementaldecoder("utf-8")()
         buffer = ""
 
         try:
@@ -152,23 +184,46 @@ class AbletonMCP(ControlSurface):
                         self.log_message("Client disconnected")
                         break
 
-                    buffer += data.decode("utf-8")
+                    try:
+                        buffer += utf8.decode(data)
+                    except UnicodeDecodeError:
+                        self._send_response(client, {"status": "error",
+                                                     "message": "Request is not valid UTF-8; buffer cleared"})
+                        utf8.reset()
+                        buffer = ""
+                        continue
+                    if len(buffer) > MAX_REQUEST_BYTES:
+                        self._send_response(client, {"status": "error",
+                                                     "message": "Request too large; buffer cleared"})
+                        buffer = ""
+                        continue
 
                     # Parse as many complete JSON objects as the buffer holds,
-                    # keeping any trailing partial bytes. raw_decode tolerates
+                    # keeping any trailing partial text. raw_decode tolerates
                     # coalesced messages and needs no delimiter, so it stays
                     # compatible with single-object clients.
-                    decoder = json.JSONDecoder()
                     buffer = buffer.lstrip()
                     while buffer:
                         try:
                             command, end = decoder.raw_decode(buffer)
                         except ValueError:
-                            break  # incomplete object - wait for more bytes
+                            # Incomplete object: wait for more bytes. A buffer
+                            # that cannot even start a JSON object will never
+                            # parse - answer and drop it instead of wedging the
+                            # connection forever.
+                            if not buffer.startswith(("{", "[")):
+                                self._send_response(client, {"status": "error",
+                                                             "message": "Invalid JSON request; buffer cleared"})
+                                buffer = ""
+                            break
                         buffer = buffer[end:].lstrip()
+                        if not isinstance(command, dict):
+                            self._send_response(client, {"status": "error",
+                                                         "message": "Request must be a JSON object"})
+                            continue
                         self.log_message("Received command: " + str(command.get("type", "unknown")))
                         response = self._process_command(command)
-                        client.sendall(json.dumps(response).encode("utf-8"))
+                        self._send_response(client, response)
 
                 except Exception as e:
                     self.log_message("Error handling client data: " + str(e))
@@ -195,6 +250,8 @@ class AbletonMCP(ControlSurface):
                 client.close()
             except:
                 pass
+            if client in self.client_sockets:
+                self.client_sockets.remove(client)
             self.log_message("Client handler stopped")
 
     @staticmethod
@@ -205,15 +262,15 @@ class AbletonMCP(ControlSurface):
         return p[key]
 
     # ── Declarative command dispatch ─────────────────────────────────
-    # Mutating commands run on Live's main thread via schedule_message;
-    # read-only commands run directly on the socket thread.
+    # ALL commands (mutating and read-only) are marshalled onto Live's main
+    # thread by _process_command; the two dicts only document intent.
     _MUTATING_COMMANDS = {
         "create_midi_track": lambda s, p: s._create_midi_track(p.get("index", -1)),
         "create_audio_track": lambda s, p: s._create_audio_track(p.get("index", -1)),
         "create_return_track": lambda s, p: s._create_return_track(),
         "delete_track": lambda s, p: s._delete_track(s._req(p, "track_index")),
         "duplicate_track": lambda s, p: s._duplicate_track(s._req(p, "track_index")),
-        "set_track_name": lambda s, p: s._set_track_name(s._req(p, "track_index"), p.get("name", "")),
+        "set_track_name": lambda s, p: s._set_track_name(s._req(p, "track_index"), s._req(p, "name")),
         "set_track_color": lambda s, p: s._set_track_color(s._req(p, "track_index"), p.get("color_index", 0)),
         "set_track_volume": lambda s, p: s._set_track_volume(s._req(p, "track_index"), s._req(p, "volume")),
         "set_track_pan": lambda s, p: s._set_track_pan(s._req(p, "track_index"), s._req(p, "pan")),
@@ -226,7 +283,7 @@ class AbletonMCP(ControlSurface):
         "delete_clip": lambda s, p: s._delete_clip(s._req(p, "track_index"), s._req(p, "clip_index")),
         "add_notes_to_clip": lambda s, p: s._add_notes_to_clip(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "notes")),
         "edit_notes": lambda s, p: s._edit_notes(s._req(p, "track_index"), s._req(p, "clip_index"), p.get("add", []), p.get("remove", [])),
-        "set_clip_name": lambda s, p: s._set_clip_name(s._req(p, "track_index"), s._req(p, "clip_index"), p.get("name", "")),
+        "set_clip_name": lambda s, p: s._set_clip_name(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "name")),
         "set_clip_color": lambda s, p: s._set_clip_color(s._req(p, "track_index"), s._req(p, "clip_index"), p.get("color_index", 0)),
         "set_clip_groove": lambda s, p: s._set_clip_groove(s._req(p, "track_index"), s._req(p, "clip_index"), p.get("groove_index")),
         "set_clip_loop": lambda s, p: s._set_clip_loop(s._req(p, "track_index"), s._req(p, "clip_index"), p),
@@ -235,7 +292,7 @@ class AbletonMCP(ControlSurface):
         "fire_clip": lambda s, p: s._fire_clip(s._req(p, "track_index"), s._req(p, "clip_index")),
         "stop_clip": lambda s, p: s._stop_clip(s._req(p, "track_index"), s._req(p, "clip_index")),
         "fire_scene": lambda s, p: s._fire_scene(s._req(p, "scene_index")),
-        "set_scene_name": lambda s, p: s._set_scene_name(s._req(p, "scene_index"), p.get("name", "")),
+        "set_scene_name": lambda s, p: s._set_scene_name(s._req(p, "scene_index"), s._req(p, "name")),
         "create_scene": lambda s, p: s._create_scene(p.get("index", -1)),
         "set_tempo": lambda s, p: s._set_tempo(s._req(p, "tempo")),
         "set_time_signature": lambda s, p: s._set_time_signature(p.get("numerator", 4), p.get("denominator", 4)),
@@ -306,16 +363,14 @@ class AbletonMCP(ControlSurface):
 
     _READONLY_COMMANDS = {
         "get_session_info": lambda s, p: s._get_session_info(),
-        "get_track_info": lambda s, p: s._get_track_info(p.get("track_index", 0)),
+        "get_track_info": lambda s, p: s._get_track_info(s._req(p, "track_index")),
         "get_return_tracks": lambda s, p: s._get_return_tracks(),
-        "get_arrangement_clips": lambda s, p: s._get_arrangement_clips(p.get("track_index", 0)),
-        "get_clip_notes": lambda s, p: s._get_clip_notes(p.get("track_index", 0), p.get("clip_index", 0)),
+        "get_arrangement_clips": lambda s, p: s._get_arrangement_clips(s._req(p, "track_index")),
+        "get_clip_notes": lambda s, p: s._get_clip_notes(s._req(p, "track_index"), s._req(p, "clip_index")),
         "get_grooves": lambda s, p: s._get_grooves(),
-        "get_device_parameters": lambda s, p: s._get_device_parameters(p.get("track_index", 0), p.get("device_index", 0)),
-        "get_return_device_parameters": lambda s, p: s._get_device_parameters(p.get("return_index", 0), p.get("device_index", 0), track_type="return"),
-        "get_master_device_parameters": lambda s, p: s._get_device_parameters(0, p.get("device_index", 0), track_type="master"),
-        "get_browser_item": lambda s, p: s._get_browser_item(p.get("uri"), p.get("path", None)),
-        "get_browser_categories": lambda s, p: s._get_browser_categories(p.get("category_type", "all")),
+        "get_device_parameters": lambda s, p: s._get_device_parameters(s._req(p, "track_index"), s._req(p, "device_index")),
+        "get_return_device_parameters": lambda s, p: s._get_device_parameters(s._req(p, "return_index"), s._req(p, "device_index"), track_type="return"),
+        "get_master_device_parameters": lambda s, p: s._get_device_parameters(0, s._req(p, "device_index"), track_type="master"),
         "get_browser_tree": lambda s, p: s.get_browser_tree(p.get("category_type", "all")),
         "get_browser_items_at_path": lambda s, p: s.get_browser_items_at_path(p.get("path", "")),
         "search_browser": lambda s, p: s._search_browser(p.get("query", ""), p.get("category"), p.get("max_results", 25)),
@@ -332,6 +387,9 @@ class AbletonMCP(ControlSurface):
         "get_scale_info": lambda s, p: s._get_scale_info(),
     }
 
+    # One merged lookup view; the two source dicts document intent.
+    _ALL_COMMANDS = {**_MUTATING_COMMANDS, **_READONLY_COMMANDS}
+
     # Commands whose main-thread work can exceed the default 10 s budget.
     _COMMAND_TIMEOUTS = {"create_audio_clip": 60.0}
 
@@ -342,7 +400,7 @@ class AbletonMCP(ControlSurface):
         response = {"status": "success", "result": {}}
 
         try:
-            handler = self._READONLY_COMMANDS.get(command_type) or self._MUTATING_COMMANDS.get(command_type)
+            handler = self._ALL_COMMANDS.get(command_type)
             if handler is None:
                 response["status"] = "error"
                 response["message"] = "Unknown command: " + command_type
@@ -353,8 +411,14 @@ class AbletonMCP(ControlSurface):
             # Live's audio/UI threads and can crash. The socket threads only do
             # I/O; this queue bridges them to a scheduled main-thread task.
             response_queue = queue.Queue()
+            cancelled = threading.Event()
 
             def main_thread_task():
+                if cancelled.is_set():
+                    # The client already received a timeout error; applying the
+                    # mutation late (after newer commands) would reorder edits.
+                    self.log_message("Skipping cancelled task: " + command_type)
+                    return
                 try:
                     response_queue.put({"status": "success",
                                         "result": handler(self, params)})
@@ -363,13 +427,19 @@ class AbletonMCP(ControlSurface):
                     self.log_message(traceback.format_exc())
                     response_queue.put({"status": "error", "message": str(e)})
 
-            try:
-                self.schedule_message(0, main_thread_task)
-            except AssertionError:
-                # Already on the main thread - execute directly
+            if threading.current_thread() is self._main_thread:
+                # Already on the main thread - execute directly.
                 main_thread_task()
+            else:
+                self.schedule_message(0, main_thread_task)
 
             timeout = self._COMMAND_TIMEOUTS.get(command_type, 10.0)
+            if command_type == "batch":
+                # A batch inherits the longest budget of its sub-commands.
+                for cmd in params.get("commands") or []:
+                    sub = cmd.get("type", "") if isinstance(cmd, dict) else ""
+                    sub = self._BATCH_ALIASES.get(sub, sub)
+                    timeout = max(timeout, self._COMMAND_TIMEOUTS.get(sub, 0.0))
             try:
                 task_response = response_queue.get(timeout=timeout)
                 if task_response.get("status") == "error":
@@ -378,14 +448,19 @@ class AbletonMCP(ControlSurface):
                 else:
                     response["result"] = task_response.get("result", {})
             except queue.Empty:
+                cancelled.set()
                 response["status"] = "error"
-                response["message"] = "Timeout waiting for operation to complete"
+                response["message"] = ("Timeout waiting for operation to complete "
+                                       "(a modal dialog in Live blocks the Remote Script); "
+                                       "the operation was cancelled and will not apply late")
         except Exception as e:
             self.log_message("Error processing command: " + str(e))
             self.log_message(traceback.format_exc())
             response["status"] = "error"
             response["message"] = str(e)
 
+        if response["status"] == "error":
+            response.pop("result", None)
         return response
 
     # Command implementations
@@ -638,17 +713,8 @@ class AbletonMCP(ControlSurface):
                 raise Exception("No clip in slot")
 
             clip = clip_slot.clip
-
-            # Convert note data to Live's format
-            live_notes = []
-            for note in notes:
-                pitch = note.get("pitch", 60)
-                start_time = note.get("start_time", 0.0)
-                duration = note.get("duration", 0.25)
-                velocity = note.get("velocity", 100)
-                mute = note.get("mute", False)
-
-                live_notes.append((pitch, start_time, duration, velocity, mute))
+            if not clip.is_midi_clip:
+                raise Exception("Clip is not a MIDI clip")
 
             # REPLACE the clip's note content (see _replace_all_notes)
             self._replace_all_notes(clip, notes)
@@ -879,100 +945,6 @@ class AbletonMCP(ControlSurface):
 
     # ── Browser implementations ───────────────────────────────────────────────
 
-    def _get_browser_categories(self, category_type):
-        """List the top-level browser categories this Live build actually exposes."""
-        app = self.application()
-        if not app or not hasattr(app, "browser") or app.browser is None:
-            raise RuntimeError("Browser is not available in the Live application")
-        categories = [attr for attr in dir(app.browser) if not attr.startswith("_")]
-        return {"category_type": category_type, "categories": categories}
-
-    def _get_browser_item(self, uri, path):
-        """Get a browser item by URI or path"""
-        try:
-            # Access the application's browser instance instead of creating a new one
-            app = self.application()
-            if not app:
-                raise RuntimeError("Could not access Live application")
-
-            result = {
-                "uri": uri,
-                "path": path,
-                "found": False
-            }
-
-            # Try to find by URI first if provided
-            if uri:
-                item = self._find_browser_item_by_uri(app.browser, uri)
-                if item:
-                    result["found"] = True
-                    result["item"] = {
-                        "name": item.name,
-                        "is_folder": item.is_folder,
-                        "is_device": item.is_device,
-                        "is_loadable": item.is_loadable,
-                        "uri": item.uri
-                    }
-                    return result
-
-            # If URI not provided or not found, try by path
-            if path:
-                # Parse the path and navigate to the specified item
-                path_parts = path.split("/")
-
-                # Determine the root based on the first part
-                current_item = None
-                if path_parts[0].lower() == "instruments":
-                    current_item = app.browser.instruments
-                elif path_parts[0].lower() == "sounds":
-                    current_item = app.browser.sounds
-                elif path_parts[0].lower() == "drums":
-                    current_item = app.browser.drums
-                elif path_parts[0].lower() == "audio_effects":
-                    current_item = app.browser.audio_effects
-                elif path_parts[0].lower() == "midi_effects":
-                    current_item = app.browser.midi_effects
-                else:
-                    # Default to instruments if not specified
-                    current_item = app.browser.instruments
-                    # Don't skip the first part in this case
-                    path_parts = ["instruments"] + path_parts
-
-                # Navigate through the path
-                for i in range(1, len(path_parts)):
-                    part = path_parts[i]
-                    if not part:  # Skip empty parts
-                        continue
-
-                    found = False
-                    for child in current_item.children:
-                        if child.name.lower() == part.lower():
-                            current_item = child
-                            found = True
-                            break
-
-                    if not found:
-                        result["error"] = f"Path part '{part}' not found"
-                        return result
-
-                # Found the item
-                result["found"] = True
-                result["item"] = {
-                    "name": current_item.name,
-                    "is_folder": current_item.is_folder,
-                    "is_device": current_item.is_device,
-                    "is_loadable": current_item.is_loadable,
-                    "uri": current_item.uri
-                }
-
-            return result
-        except Exception as e:
-            self.log_message("Error getting browser item: " + str(e))
-            self.log_message(traceback.format_exc())
-            raise
-
-
-
     def _load_browser_item(self, track_index, item_uri):
         """Load a browser item onto a regular track by its URI"""
         try:
@@ -1177,18 +1149,7 @@ class AbletonMCP(ControlSurface):
 
     def _set_device_parameter(self, track_index, device_index, parameter, value, track_type="track"):
         device = self._get_device(track_index, device_index, track_type)
-        param = None
-        if isinstance(parameter, int):
-            if parameter < 0 or parameter >= len(device.parameters):
-                raise IndexError("Parameter index out of range")
-            param = device.parameters[parameter]
-        else:
-            for p in device.parameters:
-                if p.name == parameter:
-                    param = p
-                    break
-            if param is None:
-                raise Exception("Parameter not found: " + str(parameter))
+        param = self._resolve_parameter(device, parameter)
         if not param.is_enabled:
             raise Exception("Parameter is disabled: " + param.name)
         param.value = max(param.min, min(param.max, float(value)))
@@ -1287,7 +1248,9 @@ class AbletonMCP(ControlSurface):
         clip = self._get_clip(track_index, clip_index)
         import Live
         amt = max(0.0, min(1.0, float(amount)))
-        base = self._Q_BASE.get(grid, ["sixtenth"])
+        base = self._Q_BASE.get(grid)
+        if base is None:
+            raise Exception("Unknown grid '" + str(grid) + "'. Valid: " + ", ".join(sorted(self._Q_BASE)))
         candidates = []
         for enum_name, prefix in (("RecordingQuantization", "rec_q_"), ("Quantization", "q_")):
             enum = getattr(Live.Song, enum_name, None)
@@ -1415,8 +1378,9 @@ class AbletonMCP(ControlSurface):
         return {"fired": scene_index}
 
     def _set_scene_name(self, scene_index, name):
-        self._get_scene(scene_index).name = name
-        return {"name": name}
+        scene = self._get_scene(scene_index)
+        scene.name = name
+        return {"name": scene.name}
 
     # -- transport / meter / loop --
     def _set_time_signature(self, numerator, denominator):
@@ -1545,6 +1509,7 @@ class AbletonMCP(ControlSurface):
         "duplicate_to_arrangement": "duplicate_session_clip_to_arrangement",
         "set_arrangement_time": "set_current_song_time",
         "load_instrument_or_effect": "load_browser_item",
+        "save_set": "try_save_project",
         "batch_commands": "batch",
     }
 
@@ -1557,7 +1522,7 @@ class AbletonMCP(ControlSurface):
         try:
             for i, cmd in enumerate(commands):
                 ctype = self._BATCH_ALIASES.get(cmd.get("type", ""), cmd.get("type", ""))
-                handler = self._MUTATING_COMMANDS.get(ctype) or self._READONLY_COMMANDS.get(ctype)
+                handler = self._ALL_COMMANDS.get(ctype)
                 if handler is None:
                     raise Exception(f"batch[{i}]: unknown command '{ctype}'")
                 if ctype == "batch":
@@ -1675,7 +1640,8 @@ class AbletonMCP(ControlSurface):
     def _get_master_meters(self):
         m = self._song.master_track
         return {"left": self._meter(m, "output_meter_left"),
-                "right": self._meter(m, "output_meter_right")}
+                "right": self._meter(m, "output_meter_right"),
+                "peak": self._meter(m, "output_meter_level")}
 
     # ── note API helpers (Live 11+ extended API, legacy fallback) ────
     @staticmethod

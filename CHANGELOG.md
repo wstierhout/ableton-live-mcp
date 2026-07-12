@@ -1,14 +1,53 @@
 # Changelog
 
+## 1.7.2
+
+Audit pass across the whole server. 154 tools.
+
+- New tool `delete_return_track` (the handler already existed; the tool was missing).
+- Offline `.als`: track `muted` is read from the track activator (was always
+  false), `soloed` from the track-level solo field (was reading a sampler zone),
+  colors from Live 11/12's `Color` tag (was always null); frozen tracks no longer
+  report phantom freeze clips; rack contents are flattened into device lists so
+  `als_find_unfinished` sees dynamics inside a master rack; non-Ableton and
+  oversized files are rejected with clear errors.
+- `.adg`/`.adv` edition detection corrected against Ableton's edition chart
+  (Drift/Simpler/Impulse/Drum Rack/Compressor/EQ Three/Reverb ship with Intro;
+  Max for Live devices need Suite); `.amxd` files no longer count as samples.
+- Connection layer: typed errors (`AbletonTimeoutError`, `AbletonCommandError`,
+  ...); an application-level error from Live no longer tears down a healthy
+  connection; timeouts surface the modal-dialog hint again; sockets are closed
+  (not leaked) on every error path; the health check and singleton creation are
+  lock-safe; UTF-8 responses split mid-character reassemble correctly.
+- Remote Script: invalid JSON, non-object JSON, or an unserializable result no
+  longer wedge or kill the connection; client sockets close on reload; a timed-out
+  command is cancelled instead of applying late; batches inherit the longest
+  sub-command timeout; `save_set` is batchable; unknown quantize grids error
+  instead of silently misquantizing; required index/name params no longer default
+  silently.
+- Generators: `generate_bassline` validates `octave`; pitches and start times are
+  clamped everywhere; rewriting an existing clip resizes its loop to the new
+  pattern length; sus chords no longer gain a major third and dim7 voicings use
+  the true bb7; the two chord parsers are unified; muted notes no longer skew key
+  detection; the additive process sorts notes by time.
+- `record_section` turns monitoring off before arming (no more feedback into the
+  bounce) and caps real-time recording at 5 minutes.
+- Packaging: build floor raised to `setuptools>=77` (the PEP 639 license string
+  made builds fail on older setuptools); CI runs on 3.10-3.14; new tests cover the
+  offline parser, connection error paths, and the timeout-map sync.
+
 ## 1.7.1
 
-- Internal cleanup (/simplify): shared the tolerant `.als`/`.adg` XML readers,
-  rooted the offline mixer/automation lookups so they no longer scan whole tracks,
-  and `adg_summary`/`adg_edition` skip the drum-pad/macro-mapping walks that only
+- Shared the tolerant `.als`/`.adg` XML value-readers in `_als_xml.py` (they were
+  duplicated across `offline.py` and `offline_racks.py`).
+- Rooted the offline mixer/automation lookups so they no longer scan whole tracks;
+  `adg_summary`/`adg_edition` skip the drum-pad/macro-mapping walks that only
   `adg_analyze` needs.
 - Toolset groups are now domains that can span modules (e.g. `generators` covers the
   basic, advanced, and motif generators; `offline` covers `.als` and `.adg`), from a
   single source, so `ABLETON_TOOLSETS` has 11 groups instead of one per module.
+  BREAKING: old per-module group names (`motif`, `keys`, `device_kb`,
+  `generators_advanced`, `offline_racks`) are no longer valid values.
 - Deduped note/diff/clip-pool helpers across the new modules.
 
 ## 1.7.0

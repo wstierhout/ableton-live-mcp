@@ -89,3 +89,39 @@ def test_every_self_method_call_resolves():
     }
     missing = called - CLASS_METHODS - FRAMEWORK_ATTRS
     assert not missing, f"self.<method> calls with no definition: {missing}"
+
+
+def test_command_timeout_maps_stay_in_sync():
+    """connection.REMOTE_COMMAND_TIMEOUTS and the Remote Script's
+    _COMMAND_TIMEOUTS carry a 'keep in sync' comment; enforce it."""
+    from ableton_live_mcp.connection import REMOTE_COMMAND_TIMEOUTS, REMOTE_DEFAULT_TIMEOUT
+
+    cls = _ableton_class()
+    script_map = None
+    for node in cls.body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "_COMMAND_TIMEOUTS" for t in node.targets
+        ):
+            script_map = ast.literal_eval(node.value)
+    assert script_map is not None, "_COMMAND_TIMEOUTS not found in the Remote Script"
+    assert script_map == REMOTE_COMMAND_TIMEOUTS
+
+    # The script's hardcoded default budget must match the client constant too.
+    defaults = set(re.findall(r"_COMMAND_TIMEOUTS\.get\(command_type, ([\d.]+)\)", SCRIPT_SRC))
+    assert defaults == {str(REMOTE_DEFAULT_TIMEOUT)}, defaults
+
+
+def test_quantize_grid_vocabulary_stays_in_sync():
+    """clips.VALID_GRIDS pre-validates what the Remote Script's _Q_BASE accepts;
+    adding a grid to one side without the other is silently dead."""
+    from ableton_live_mcp.tools.clips import VALID_GRIDS
+
+    cls = _ableton_class()
+    for node in cls.body:
+        if isinstance(node, ast.Assign) and any(
+            getattr(t, "id", None) == "_Q_BASE" for t in node.targets
+        ):
+            script_grids = set(ast.literal_eval(node.value))
+            assert script_grids == set(VALID_GRIDS)
+            return
+    raise AssertionError("_Q_BASE not found in the Remote Script")

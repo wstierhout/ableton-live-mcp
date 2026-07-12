@@ -167,11 +167,23 @@ def test_only_named_macros_are_kept(instrument_rack):
 
 
 def test_instrument_rack_edition_is_suite(instrument_rack):
-    # Operator is Suite-only, so the whole rack requires Suite.
+    # Operator is Suite-only, so the whole rack requires Suite. Reverb ships
+    # with Intro, so it must not appear as a Standard-tier device.
     data, _ = r._load(instrument_rack)
     assert data["edition"] == "suite"
     assert "Operator" in data["suite_devices"]
-    assert "Reverb" in data["standard_devices"]
+    assert data["standard_devices"] == []
+
+
+def test_classify_edition_tiers():
+    # Spot-check the tier tables against Ableton's edition chart.
+    assert r._classify("Eq8", "EQ Eight") == "standard"
+    assert r._classify("GlueCompressor", "Glue Compressor") == "standard"
+    assert r._classify("Reverb", "Reverb") is None  # Intro
+    assert r._classify("Drift", "Drift") is None  # all editions since 11.3
+    assert r._classify("OriginalSimpler", "Simpler") is None  # Intro instrument
+    assert r._classify("Operator", "Operator") == "suite"
+    assert r._classify("MxDeviceAudioEffect", "Max Audio Effect") == "suite"
 
 
 # ── drum rack ────────────────────────────────────────────────────────

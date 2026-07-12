@@ -115,6 +115,13 @@ def create_return_track(ctx: Context) -> str:
     return f"Return track created. Total returns: {r.get('return_track_count')}"
 
 
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+def delete_return_track(ctx: Context, return_index: int) -> str:
+    """Delete a return track by index (0 = Return A). Later returns shift down."""
+    r = get_ableton_connection().send_command("delete_return_track", {"return_index": return_index})
+    return f"Return track deleted. Total returns: {r.get('return_track_count')}"
+
+
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def create_audio_track(ctx: Context, index: int = -1) -> str:
     """Create a new audio track. index -1 appends at the end."""

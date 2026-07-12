@@ -19,21 +19,11 @@ def load_instrument_or_effect(ctx: Context, track_index: int, uri: str) -> str:
     - track_index: The index of the track to load the instrument on
     - uri: The URI of the instrument or effect to load (e.g., 'query:Synths#Instrument%20Rack:Bass:FileId_5116')
     """
-    ableton = get_ableton_connection()
-    result = ableton.send_command(
+    result = get_ableton_connection().send_command(
         "load_browser_item", {"track_index": track_index, "item_uri": uri}
     )
-
-    # Check if the instrument was loaded successfully
-    if result.get("loaded", False):
-        new_devices = result.get("new_devices", [])
-        if new_devices:
-            return f"Loaded instrument with URI '{uri}' on track {track_index}. New devices: {', '.join(new_devices)}"
-        else:
-            devices = result.get("devices_after", [])
-            return f"Loaded instrument with URI '{uri}' on track {track_index}. Devices on track: {', '.join(devices)}"
-    else:
-        raise Exception(f"Failed to load instrument with URI '{uri}'")
+    # The Remote Script raises on failure, so a reply means it loaded.
+    return f"Loaded '{result.get('item_name', uri)}' on track '{result.get('track_name', track_index)}'"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
@@ -45,21 +35,24 @@ def get_device_parameters(ctx: Context, track_index: int, device_index: int) -> 
     return json.dumps(result, indent=2)
 
 
+def _set_param(command: str, prefix: str, **wire_params) -> str:
+    r = get_ableton_connection().send_command(command, wire_params)
+    return f"{prefix}{r.get('device')}: {r.get('parameter')} = {r.get('display', r.get('value'))}"
+
+
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def set_device_parameter(
     ctx: Context, track_index: int, device_index: int, parameter: str | int, value: float
 ) -> str:
     """Set a device parameter by name or index. Value is clamped to the parameter's min/max."""
-    result = get_ableton_connection().send_command(
+    return _set_param(
         "set_device_parameter",
-        {
-            "track_index": track_index,
-            "device_index": device_index,
-            "parameter": parameter,
-            "value": value,
-        },
+        "",
+        track_index=track_index,
+        device_index=device_index,
+        parameter=parameter,
+        value=value,
     )
-    return f"{result.get('device')}: {result.get('parameter')} = {result.get('display', result.get('value'))}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -104,11 +97,13 @@ def set_master_device_parameter(
     ctx: Context, device_index: int, parameter: str | int, value: float
 ) -> str:
     """Set a parameter on a Master-track device by name or index."""
-    r = get_ableton_connection().send_command(
+    return _set_param(
         "set_master_device_parameter",
-        {"device_index": device_index, "parameter": parameter, "value": value},
+        "master ",
+        device_index=device_index,
+        parameter=parameter,
+        value=value,
     )
-    return f"master {r.get('device')}: {r.get('parameter')} = {r.get('display', r.get('value'))}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -116,16 +111,14 @@ def set_return_device_parameter(
     ctx: Context, return_index: int, device_index: int, parameter: str | int, value: float
 ) -> str:
     """Set a parameter on a Return-track device by name or index."""
-    r = get_ableton_connection().send_command(
+    return _set_param(
         "set_return_device_parameter",
-        {
-            "return_index": return_index,
-            "device_index": device_index,
-            "parameter": parameter,
-            "value": value,
-        },
+        f"return {return_index} ",
+        return_index=return_index,
+        device_index=device_index,
+        parameter=parameter,
+        value=value,
     )
-    return f"return {return_index} {r.get('device')}: {r.get('parameter')} = {r.get('display', r.get('value'))}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
@@ -163,18 +156,16 @@ def set_chain_device_parameter(
 ) -> str:
     """Set a parameter on a device INSIDE a rack chain (indices from
     get_rack_chains). Values clamp to the parameter's native range."""
-    r = get_ableton_connection().send_command(
+    return _set_param(
         "set_chain_device_parameter",
-        {
-            "track_index": track_index,
-            "device_index": device_index,
-            "chain_index": chain_index,
-            "chain_device_index": chain_device_index,
-            "parameter": parameter,
-            "value": value,
-        },
+        "",
+        track_index=track_index,
+        device_index=device_index,
+        chain_index=chain_index,
+        chain_device_index=chain_device_index,
+        parameter=parameter,
+        value=value,
     )
-    return f"{r.get('device')}: {r.get('parameter')} = {r.get('value')}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

@@ -6,8 +6,27 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-from ..connection import get_ableton_connection, logger
+from ..connection import AbletonCommandError, get_ableton_connection, logger
 from ._util import params
+
+
+def _translate_browser_error(e: Exception, doing: str) -> Exception:
+    """Map the Remote Script's browser failures to actionable messages."""
+    error_msg = str(e)
+    if "Browser is not available" in error_msg:
+        logger.error(f"Browser is not available in Ableton: {error_msg}")
+        return Exception(
+            "Error: The Ableton browser is not available. "
+            "Make sure Ableton Live is fully loaded and try again."
+        )
+    if "Could not access Live application" in error_msg:
+        logger.error(f"Could not access Live application: {error_msg}")
+        return Exception(
+            "Error: Could not access the Ableton Live application. "
+            "Make sure Ableton Live is running and the Remote Script is loaded."
+        )
+    logger.error(f"Error {doing}: {error_msg}")
+    return Exception(f"Error {doing}: {error_msg}")
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
@@ -22,15 +41,13 @@ def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
         ableton = get_ableton_connection()
         result = ableton.send_command("get_browser_tree", {"category_type": category_type})
 
-        # Check if we got any categories
         if "available_categories" in result and len(result.get("categories", [])) == 0:
             available_cats = result.get("available_categories", [])
-            return (
+            raise ValueError(
                 f"No categories found for '{category_type}'. "
                 f"Available browser categories: {', '.join(available_cats)}"
             )
 
-        # Format the tree in a more readable way
         total_folders = result.get("total_folders", 0)
         formatted_output = (
             f"Browser tree for '{category_type}' (showing {total_folders} folders):\n\n"
@@ -44,7 +61,6 @@ def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
                 path = item.get("path", "")
                 has_more = item.get("has_more", False)
 
-                # Add this item
                 output += f"{prefix}• {name}"
                 if path:
                     output += f" (path: {path})"
@@ -52,32 +68,17 @@ def get_browser_tree(ctx: Context, category_type: str = "all") -> str:
                     output += " [...]"
                 output += "\n"
 
-                # Add children
                 for child in item.get("children", []):
                     output += format_tree(child, indent + 1)
             return output
 
-        # Format each category
         for category in result.get("categories", []):
             formatted_output += format_tree(category)
             formatted_output += "\n"
 
         return formatted_output
-    except Exception as e:
-        error_msg = str(e)
-        if "Browser is not available" in error_msg:
-            logger.error(f"Browser is not available in Ableton: {error_msg}")
-            raise Exception(
-                "Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
-            ) from e
-        elif "Could not access Live application" in error_msg:
-            logger.error(f"Could not access Live application: {error_msg}")
-            raise Exception(
-                "Error: Could not access the Ableton Live application. Make sure Ableton Live is running and the Remote Script is loaded."
-            ) from e
-        else:
-            logger.error(f"Error getting browser tree: {error_msg}")
-            raise Exception(f"Error getting browser tree: {error_msg}") from e
+    except AbletonCommandError as e:
+        raise _translate_browser_error(e, "getting browser tree") from e
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
@@ -93,38 +94,21 @@ def get_browser_items_at_path(ctx: Context, path: str) -> str:
         ableton = get_ableton_connection()
         result = ableton.send_command("get_browser_items_at_path", {"path": path})
 
-        # Check if there was an error with available categories
-        if "error" in result and "available_categories" in result:
-            error = result.get("error", "")
-            available_cats = result.get("available_categories", [])
-            raise Exception(
-                f"Error: {error}. Available browser categories: {', '.join(available_cats)}"
-            )
+        # The Remote Script reports lookup failures ("Path part 'x' not found",
+        # "Unknown or unavailable category", ...) as a success payload with an
+        # "error" key - surface every one of them as a real error.
+        if "error" in result:
+            error = result["error"]
+            available_cats = result.get("available_categories")
+            if available_cats:
+                raise ValueError(
+                    f"Error: {error}. Available browser categories: {', '.join(available_cats)}"
+                )
+            raise ValueError(f"Error: {error}. Check the path with get_browser_tree.")
 
         return json.dumps(result, indent=2)
-    except Exception as e:
-        error_msg = str(e)
-        if "Browser is not available" in error_msg:
-            logger.error(f"Browser is not available in Ableton: {error_msg}")
-            raise Exception(
-                "Error: The Ableton browser is not available. Make sure Ableton Live is fully loaded and try again."
-            ) from e
-        elif "Could not access Live application" in error_msg:
-            logger.error(f"Could not access Live application: {error_msg}")
-            raise Exception(
-                "Error: Could not access the Ableton Live application. Make sure Ableton Live is running and the Remote Script is loaded."
-            ) from e
-        elif "Unknown or unavailable category" in error_msg:
-            logger.error(f"Invalid browser category: {error_msg}")
-            return (
-                f"Error: {error_msg}. Please check the available categories using get_browser_tree."
-            )
-        elif "Path part" in error_msg and "not found" in error_msg:
-            logger.error(f"Path not found: {error_msg}")
-            raise Exception(f"Error: {error_msg}. Please check the path and try again.") from e
-        else:
-            logger.error(f"Error getting browser items at path: {error_msg}")
-            raise Exception(f"Error getting browser items at path: {error_msg}") from e
+    except AbletonCommandError as e:
+        raise _translate_browser_error(e, "getting browser items at path") from e
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -134,18 +118,14 @@ def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str) 
 
     Parameters:
     - track_index: The index of the track to load on
-    - rack_uri: The URI of the drum rack to load (e.g., 'Drums/Drum Rack')
-    - kit_path: Path to the drum kit inside the browser (e.g., 'drums/acoustic/kit1')
+    - rack_uri: URI of the drum rack to load, as returned by search_browser
+                (e.g. 'query:Drums#Drum%20Rack')
+    - kit_path: Path to the drum kit inside the browser (e.g. 'drums/acoustic/kit1')
     """
     ableton = get_ableton_connection()
 
-    # Step 1: Load the drum rack
-    result = ableton.send_command(
-        "load_browser_item", {"track_index": track_index, "item_uri": rack_uri}
-    )
-
-    if not result.get("loaded", False):
-        raise Exception(f"Failed to load drum rack with URI '{rack_uri}'")
+    # Step 1: Load the drum rack (the Remote Script raises on failure).
+    ableton.send_command("load_browser_item", {"track_index": track_index, "item_uri": rack_uri})
 
     # Step 2: Get the drum kit items at the specified path
     kit_result = ableton.send_command("get_browser_items_at_path", {"path": kit_path})

@@ -1,10 +1,12 @@
 """FastMCP application instance and server lifecycle."""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import anyio.to_thread
 from mcp.server.fastmcp import FastMCP
 
 from .connection import disconnect_ableton, get_ableton_connection
@@ -12,19 +14,27 @@ from .connection import disconnect_ableton, get_ableton_connection
 logger = logging.getLogger("AbletonMCPServer")
 
 
+async def _connect_on_startup() -> None:
+    """Best-effort connection warm-up; every tool call lazily connects anyway."""
+    try:
+        await anyio.to_thread.run_sync(get_ableton_connection)
+        logger.info("Successfully connected to Ableton on startup")
+    except Exception as e:
+        logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
+        logger.warning("Make sure the Ableton Remote Script is running")
+
+
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
-    """Connect to Ableton on startup (best effort) and clean up on shutdown."""
+    """Warm up the Ableton connection on startup and clean up on shutdown."""
+    logger.info("AbletonMCP server starting up")
+    # Fire-and-forget: connect retries take up to ~17 s when Live is closed and
+    # must not delay the MCP handshake.
+    warmup = asyncio.ensure_future(_connect_on_startup())
     try:
-        logger.info("AbletonMCP server starting up")
-        try:
-            get_ableton_connection()
-            logger.info("Successfully connected to Ableton on startup")
-        except Exception as e:
-            logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
-            logger.warning("Make sure the Ableton Remote Script is running")
         yield {}
     finally:
+        warmup.cancel()
         disconnect_ableton()
         logger.info("AbletonMCP server shut down")
 

@@ -7,6 +7,18 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
+from ._util import params
+
+# Quantize grids, mirroring the Remote Script's _Q_BASE keys (sync-tested in
+# test_dispatch.py). The client pre-check saves a round trip on typos.
+VALID_GRIDS = (
+    "quarter",
+    "eighth",
+    "eighth_triplet",
+    "sixteenth",
+    "sixteenth_triplet",
+    "thirtysecond",
+)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -156,6 +168,8 @@ def quantize_clip(
 ) -> str:
     """Quantize a MIDI clip. grid: quarter/eighth/eighth_triplet/sixteenth/sixteenth_triplet/thirtysecond.
     amount 0.0-1.0 (use <1.0 to humanize toward the grid without full snap)."""
+    if grid not in VALID_GRIDS:
+        raise ValueError(f"Unknown grid '{grid}'. Valid: {', '.join(VALID_GRIDS)}")
     get_ableton_connection().send_command(
         "quantize_clip",
         {"track_index": track_index, "clip_index": clip_index, "grid": grid, "amount": amount},
@@ -176,17 +190,18 @@ def set_clip_audio(
 ) -> str:
     """Set audio-clip properties. gain 0-1, pitch_coarse semitones (-48..48), pitch_fine cents,
     warping on/off, warp_mode 0=Beats 1=Tones 2=Texture 3=Re-Pitch 4=Complex 6=Complex Pro."""
-    p = {"track_index": track_index, "clip_index": clip_index}
-    for k, v in (
-        ("gain", gain),
-        ("pitch_coarse", pitch_coarse),
-        ("pitch_fine", pitch_fine),
-        ("warping", warping),
-        ("warp_mode", warp_mode),
-    ):
-        if v is not None:
-            p[k] = v
-    r = get_ableton_connection().send_command("set_clip_audio", p)
+    opts = params(
+        gain=gain,
+        pitch_coarse=pitch_coarse,
+        pitch_fine=pitch_fine,
+        warping=warping,
+        warp_mode=warp_mode,
+    )
+    if not opts:
+        raise ValueError("Provide at least one property to set")
+    r = get_ableton_connection().send_command(
+        "set_clip_audio", {"track_index": track_index, "clip_index": clip_index, **opts}
+    )
     return f"Applied: {json.dumps(r)}"
 
 
@@ -201,16 +216,12 @@ def set_clip_loop(
     looping: bool | None = None,
 ) -> str:
     """Set a clip's loop braces (start/end beats), start marker, and looping on/off."""
-    p = {"track_index": track_index, "clip_index": clip_index}
-    for k, v in (
-        ("start", start),
-        ("end", end),
-        ("start_marker", start_marker),
-        ("looping", looping),
-    ):
-        if v is not None:
-            p[k] = v
-    r = get_ableton_connection().send_command("set_clip_loop", p)
+    opts = params(start=start, end=end, start_marker=start_marker, looping=looping)
+    if not opts:
+        raise ValueError("Provide at least one property to set")
+    r = get_ableton_connection().send_command(
+        "set_clip_loop", {"track_index": track_index, "clip_index": clip_index, **opts}
+    )
     return f"Applied: {json.dumps(r)}"
 
 
@@ -219,8 +230,8 @@ def edit_notes(
     ctx: Context,
     track_index: int,
     clip_index: int,
-    add: list[dict] = None,
-    remove: list[dict] = None,
+    add: list[dict] | None = None,
+    remove: list[dict] | None = None,
 ) -> str:
     """Edit a subset of notes in a MIDI clip without rewriting all of them.
     add = [{pitch,start_time,duration,velocity,mute}], remove = [{pitch,start_time}] (matched by pitch+start)."""
@@ -257,7 +268,7 @@ def get_clip_info(ctx: Context, track_index: int, clip_index: int) -> str:
     return json.dumps(r, indent=2)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def duplicate_clip_to(
     ctx: Context, src_track: int, src_scene: int, dst_track: int, dst_scene: int
 ) -> str:
@@ -292,20 +303,31 @@ def clip_operation(
     material outside the loop), "duplicate_region" (copy notes from
     region_start/region_length to destination_time, optionally transposing by
     transposition_amount semitones; pitch=-1 means all pitches)."""
-    params = {}
+    if op not in ("duplicate_loop", "crop", "duplicate_region"):
+        raise ValueError(f"Unknown op '{op}'. Valid: duplicate_loop, crop, duplicate_region")
+    op_params = {}
     if op == "duplicate_region":
-        params = {
-            "region_start": region_start,
-            "region_length": region_length,
-            "destination_time": destination_time,
-        }
-        if pitch is not None:
-            params["pitch"] = pitch
-        if transposition_amount is not None:
-            params["transposition_amount"] = transposition_amount
+        missing = [
+            k
+            for k, v in (
+                ("region_start", region_start),
+                ("region_length", region_length),
+                ("destination_time", destination_time),
+            )
+            if v is None
+        ]
+        if missing:
+            raise ValueError(f"duplicate_region requires: {', '.join(missing)}")
+        op_params = params(
+            region_start=region_start,
+            region_length=region_length,
+            destination_time=destination_time,
+            pitch=pitch,
+            transposition_amount=transposition_amount,
+        )
     r = get_ableton_connection().send_command(
         "clip_op",
-        {"track_index": track_index, "clip_index": clip_index, "op": op, "params": params},
+        {"track_index": track_index, "clip_index": clip_index, "op": op, "params": op_params},
     )
     return f"{op} done; clip length now {r.get('length')}"
 

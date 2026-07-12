@@ -12,7 +12,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-from ..connection import get_ableton_connection
+from ..connection import AbletonCommandError, get_ableton_connection, logger
 from . import generators_advanced as ga
 from .generators import _write_clip
 
@@ -24,9 +24,10 @@ def _new_track(conn, name):
 
 
 def _try_load(conn, track_index, query):
-    """Best-effort: search the browser and load the first fitting item. Any search
-    or load failure is swallowed so the recipe still completes (the track is just
-    silent until an instrument is added). Returns the loaded item's name or None."""
+    """Best-effort: search the browser and load the first fitting item. Search/
+    load failures are swallowed so the recipe still completes (the track is just
+    silent until an instrument is added) - but a dead connection is not, since
+    every later step would fail anyway. Returns the loaded item's name or None."""
     try:
         result = conn.send_command("search_browser", {"query": query, "max_results": 5})
         matches = result.get("matches") if isinstance(result, dict) else None
@@ -39,8 +40,8 @@ def _try_load(conn, track_index, query):
                 "load_browser_item", {"track_index": track_index, "item_uri": pick["uri"]}
             )
             return pick.get("name")
-    except Exception:
-        pass
+    except AbletonCommandError as e:
+        logger.debug(f"Recipe instrument load skipped ({query!r}): {e}")
     return None
 
 

@@ -64,7 +64,9 @@ def create_scene(ctx: Context, index: int = -1) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def create_locator(ctx: Context, time: float, name: str | None = None) -> str:
-    """Create an arrangement locator (marker) at a beat time, optionally named."""
+    """Create an arrangement locator (marker) at a beat time, optionally named.
+    SIDE EFFECT: moves the arrangement playhead to `time` (Live places cues at
+    the playhead)."""
     conn = get_ableton_connection()
     # Move the playhead first (separate command) so it settles before the cue is
     # placed - set_or_delete_cue reads the live playhead position.
@@ -130,7 +132,10 @@ def batch_commands(ctx: Context, commands: list[dict]) -> str:
     the MCP tool names (the few that differ are auto-translated), e.g.
     [{"type": "set_tempo", "params": {"tempo": 80}},
      {"type": "create_midi_track", "params": {"index": -1}}].
-    Prefer this for multi-step edits: fewer round-trips, one undo reverts all.
+    Composite tools (record_section, load_drum_kit, apply_recipe, save_set, the
+    generate_* tools) are NOT batchable - they orchestrate multiple commands
+    server-side. Prefer this for multi-step edits: fewer round-trips, one undo
+    reverts all.
     """
     result = get_ableton_connection().send_command("batch", {"commands": commands})
     return json.dumps(result, indent=2)
@@ -150,6 +155,8 @@ def set_song_scale(
 ) -> str:
     """Set the song's key context. root_note 0-11 (0=C, 2=D...), scale_name e.g.
     "Major", "Minor", "Dorian". Read current values via get_session_info."""
+    if root_note is None and scale_name is None:
+        raise ValueError("Provide root_note and/or scale_name")
     result = get_ableton_connection().send_command(
         "set_song_scale", params(root_note=root_note, scale_name=scale_name)
     )
