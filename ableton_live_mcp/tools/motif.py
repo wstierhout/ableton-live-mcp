@@ -28,30 +28,7 @@ from mcp.types import ToolAnnotations
 from ..app import mcp
 from ..connection import get_ableton_connection
 from .generators import _write_clip
-
-# ── note helpers (self-contained; mirror generators_advanced clamping) ─
-
-
-def _clamp_pitch(p):
-    return max(0, min(127, int(round(p))))
-
-
-def _clamp_vel(v):
-    return max(1, min(127, int(round(v))))
-
-
-def _note(pitch, start, dur, vel, mute=False):
-    """Build a note in the project's standard dict shape, clamped to valid MIDI.
-
-    Pitch -> 0-127, velocity -> 1-127, start_time and duration kept non-negative.
-    """
-    return {
-        "pitch": _clamp_pitch(pitch),
-        "start_time": round(max(0.0, float(start)), 6),
-        "duration": round(max(0.0, float(dur)), 6),
-        "velocity": _clamp_vel(vel),
-        "mute": bool(mute),
-    }
+from .generators_advanced import _note
 
 
 def _mute_of(n):
@@ -311,6 +288,15 @@ def transform_clip(
     )
 
 
+def _motif_source(track_index, pitches, note_length, velocity, source_clip_index):
+    """Read a motif from a source clip if given, else build one from a pitch list.
+    Returns the note list (empty if the source clip has no notes)."""
+    if source_clip_index is not None:
+        motif, _ = _read_clip_notes(track_index, int(source_clip_index))
+        return motif
+    return _motif_from_pitches(_parse_pitches(pitches), note_length, velocity)
+
+
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_phase(
     ctx: Context,
@@ -337,12 +323,9 @@ def generate_phase(
     If ``source_clip_index`` is given, the motif is read from that clip on the
     same track instead of built from ``pitches``. Returns a short summary.
     """
-    if source_clip_index is not None:
-        motif, _ = _read_clip_notes(track_index, int(source_clip_index))
-        if not motif:
-            return f"No notes in source track {track_index} slot {source_clip_index}"
-    else:
-        motif = _motif_from_pitches(_parse_pitches(pitches), note_length, velocity)
+    motif = _motif_source(track_index, pitches, note_length, velocity, source_clip_index)
+    if not motif:
+        return f"No motif notes to phase (source clip empty?) on track {track_index}"
 
     notes = phase_pattern(motif, repeats, shift)
     length = _clip_length(notes)
@@ -377,12 +360,11 @@ def generate_additive(
     If ``source_clip_index`` is given, the motif is read from that clip on the
     same track instead of built from ``pitches``. Returns a short summary.
     """
-    if source_clip_index is not None:
-        motif, _ = _read_clip_notes(track_index, int(source_clip_index))
-        if not motif:
-            return f"No notes in source track {track_index} slot {source_clip_index}"
-    else:
-        motif = _motif_from_pitches(_parse_pitches(pitches), note_length, velocity)
+    motif = _motif_source(track_index, pitches, note_length, velocity, source_clip_index)
+    if not motif:
+        return (
+            f"No motif notes for the additive process (source clip empty?) on track {track_index}"
+        )
 
     n_steps = len(motif) if steps <= 0 else steps
     notes = additive(motif, n_steps)

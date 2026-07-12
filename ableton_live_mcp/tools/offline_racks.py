@@ -26,6 +26,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
+from ._als_xml import _afloat, _aint, _flag, _fnum, _inum, _val
 
 # Group device tag -> the branch-preset tag that holds its chains.
 _BRANCH_TYPE = {
@@ -208,43 +209,6 @@ _PAD_LABELS = {
     51: "D#2 (Ride)",
 }
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-
-
-# ── tolerant value readers (Live stores most fields as <Foo Value="..."/>) ──
-
-
-def _val(elem, default=None):
-    if elem is None:
-        return default
-    v = elem.get("Value")
-    if v is not None:
-        return v
-    if elem.text and elem.text.strip():
-        return elem.text.strip()
-    return default
-
-
-def _fnum(elem, default=None):
-    try:
-        return float(_val(elem))
-    except (TypeError, ValueError):
-        return default
-
-
-def _inum(elem, default=None):
-    v = _val(elem)
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        try:
-            return int(float(v))
-        except (TypeError, ValueError):
-            return default
-
-
-def _flag(elem, default=False):
-    v = _val(elem)
-    return default if v is None else v.strip().lower() == "true"
 
 
 def _norm(text):
@@ -433,21 +397,6 @@ def _macro_mappings(root):
     return mappings
 
 
-def _afloat(elem, name):
-    try:
-        return float(elem.get(name))
-    except (TypeError, ValueError):
-        return None
-
-
-def _aint(elem, name):
-    v = elem.get(name)
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
-
-
 def _all_devices(chains):
     """Every device in a chain tree, flattened (racks included), recursively."""
     out = []
@@ -521,9 +470,11 @@ def _all_samples(root):
 # ── top-level parse ──
 
 
-def _parse(path):
+def _parse(path, detail=False):
     """Parse an .adg/.adv path into a plain dict. Raises OSError /
-    gzip.BadGzipFile / zlib.error / ET.ParseError for _load to translate."""
+    gzip.BadGzipFile / zlib.error / ET.ParseError for _load to translate. When
+    `detail` is set, also extract the (full-tree-walk) macro mappings and drum-pad
+    map that only adg_analyze needs."""
     with gzip.open(path, "rb") as f:
         root = ET.fromstring(f.read())
 
@@ -573,7 +524,7 @@ def _parse(path):
         devices = [root_device]
     edition, suite_devs, standard_devs = _edition(devices)
 
-    return {
+    result = {
         "path": path,
         "name": name,
         "creator": creator,
@@ -587,24 +538,27 @@ def _parse(path):
         "root_device": root_device,
         "chains": chains,
         "macros": _parse_macros(main_dev),
-        "macro_mappings": _macro_mappings(root),
         "samples": _all_samples(root),
-        "drum_pads": _drum_pads(root) if is_drum_rack else [],
         "device_count": len(devices),
         "chain_count": len(chains),
         "edition": edition,
         "suite_devices": suite_devs,
         "standard_devices": standard_devs,
     }
+    if detail:
+        # Extra full-tree walks that only adg_analyze consumes.
+        result["macro_mappings"] = _macro_mappings(root)
+        result["drum_pads"] = _drum_pads(root) if is_drum_rack else []
+    return result
 
 
-def _load(path):
+def _load(path, detail=False):
     """Parse with a friendly error string on failure. Returns (data, error)."""
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
         return None, f"No file at {path}. Pass the full path to a .adg or .adv file."
     try:
-        return _parse(path), None
+        return _parse(path, detail=detail), None
     except (gzip.BadGzipFile, EOFError, zlib.error):
         return None, f"{path} is not a valid gzip-compressed .adg/.adv file."
     except ET.ParseError as e:
@@ -650,7 +604,7 @@ def adg_analyze(ctx: Context, path: str) -> str:
     parameter mappings, every referenced sample (name + relative path), the
     required Live edition, and — for drum racks — the pad map (pad -> MIDI note,
     label, and sample). No Live required."""
-    data, err = _load(path)
+    data, err = _load(path, detail=True)
     if err:
         raise ValueError(err)
     return json.dumps(

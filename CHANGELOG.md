@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.1
+
+- Internal cleanup (/simplify): shared the tolerant `.als`/`.adg` XML readers,
+  rooted the offline mixer/automation lookups so they no longer scan whole tracks,
+  and `adg_summary`/`adg_edition` skip the drum-pad/macro-mapping walks that only
+  `adg_analyze` needs.
+- Toolset groups are now domains that can span modules (e.g. `generators` covers the
+  basic, advanced, and motif generators; `offline` covers `.als` and `.adg`), from a
+  single source, so `ABLETON_TOOLSETS` has 11 groups instead of one per module.
+- Deduped note/diff/clip-pool helpers across the new modules.
+
 ## 1.7.0
 
 - Browser sample preview: `preview_browser_item` / `stop_browser_preview` audition a

@@ -12,20 +12,8 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-
-# Compact map of what each toolset group covers, for agent orientation. Kept in
-# sync with the tool modules by hand; it is a summary, not a generated index.
-_GROUPS = {
-    "session": "transport, tempo, tap tempo, groove/swing, scenes, locators, record modes, song scale, Ableton Link, one-call snapshot",
-    "tracks": "create/delete MIDI/audio/return tracks, delete devices, take lanes, volume/pan/mute/solo/arm/sends, routing, meters, crossfader",
-    "clips": "create clips, write/edit MIDI notes (probability), quantize with strength, groove, loop, warp, pitch/gain",
-    "devices": "browse/search and load devices onto any track incl Master and Returns, read/set any param, rack macro variations, Simpler slicing, per-pad drum control",
-    "arrangement": "place/read/delete arrangement clips, write clip automation",
-    "generators": "drum patterns, euclidean rhythms, chord progressions, jazz voicings, voice-leading melodies, walking bass, genre progressions, humanize, session setup",
-    "offline": "parse, diff, and lint saved .als files with Live closed",
-    "analysis": "scan the mix for problems and describe the toolset",
-    "recipes": "scaffold a genre starter (lofi, house) in one call",
-}
+from ._groups import GROUP_DESCRIPTIONS
+from ._util import keyed_by_name as _keyed_by_name
 
 _CONVENTIONS = [
     "Indices are 0-based; times and lengths are in beats.",
@@ -121,8 +109,8 @@ def _snapshot_delta(prev, cur):
     for k in ("tempo", "time_signature", "is_playing"):
         if prev.get(k) != cur.get(k):
             changes[k] = {"from": prev.get(k), "to": cur.get(k)}
-    pa = {t["name"]: t for t in prev.get("tracks", [])}
-    cb = {t["name"]: t for t in cur.get("tracks", [])}
+    pa = _keyed_by_name(prev.get("tracks", []))
+    cb = _keyed_by_name(cur.get("tracks", []))
     changes["tracks_added"] = [n for n in cb if n not in pa]
     changes["tracks_removed"] = [n for n in pa if n not in cb]
     modified = []
@@ -159,4 +147,4 @@ def describe_capabilities(ctx: Context) -> str:
     the conventions to follow, so you can orient before your first call. Set
     ABLETON_TOOLSETS to load only some groups. For the current live state, call
     get_session_snapshot; for mix problems, analyze_mix."""
-    return json.dumps({"groups": _GROUPS, "conventions": _CONVENTIONS}, indent=2)
+    return json.dumps({"groups": GROUP_DESCRIPTIONS, "conventions": _CONVENTIONS}, indent=2)

@@ -18,6 +18,8 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
+from ._als_xml import _afloat, _aint, _flag, _fnum, _inum, _val
+from ._util import keyed_by_name as _keyed_by_name
 
 # Track element tag -> our kind label. Live 12 renamed Master to Main.
 _TRACK_KIND = {
@@ -28,61 +30,6 @@ _TRACK_KIND = {
     "MasterTrack": "master",
     "MainTrack": "master",
 }
-
-# ── tolerant value readers (Live stores most fields as <Foo Value="..."/>) ──
-
-
-def _val(elem, default=None):
-    if elem is None:
-        return default
-    v = elem.get("Value")
-    if v is not None:
-        return v
-    if elem.text and elem.text.strip():
-        return elem.text.strip()
-    return default
-
-
-def _fnum(elem, default=None):
-    try:
-        return float(_val(elem))
-    except (TypeError, ValueError):
-        return default
-
-
-def _inum(elem, default=None):
-    v = _val(elem)
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        try:
-            return int(float(v))
-        except (TypeError, ValueError):
-            return default
-
-
-def _flag(elem, default=False):
-    v = _val(elem)
-    return default if v is None else v.strip().lower() == "true"
-
-
-def _afloat(elem, name, default=None):
-    try:
-        return float(elem.get(name))
-    except (TypeError, ValueError):
-        return default
-
-
-def _aint(elem, name, default=None):
-    v = elem.get(name)
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        try:
-            return int(float(v))
-        except (TypeError, ValueError):
-            return default
-
 
 # ── element extractors ──
 
@@ -194,11 +141,9 @@ def _track(elem, index):
         "muted": _flag(elem.find(".//Mute")),
         "soloed": _flag(elem.find(".//Solo")),
         "color_index": _inum(elem.find("ColorIndex")),
-        "volume": _fnum(elem.find(".//Mixer/Volume/Manual")),
-        "pan": _fnum(elem.find(".//Mixer/Pan/Manual")),
-        "automation_lanes": len(
-            elem.findall(".//AutomationEnvelopes/Envelopes/AutomationEnvelope")
-        ),
+        "volume": _fnum(elem.find("DeviceChain/Mixer/Volume/Manual")),
+        "pan": _fnum(elem.find("DeviceChain/Mixer/Pan/Manual")),
+        "automation_lanes": len(elem.findall("AutomationEnvelopes/Envelopes/AutomationEnvelope")),
         "devices": _devices(elem),
         "clips": clips,
         "note_count": sum(c["note_count"] for c in clips),
@@ -247,18 +192,6 @@ def _parse(path):
         "scenes": scenes,
         "locators": locators,
     }
-
-
-def _keyed_by_name(tracks):
-    """Key tracks by name, disambiguating duplicates as 'name #2', 'name #3', so a
-    diff does not silently collapse same-named tracks to the last one."""
-    seen = {}
-    out = {}
-    for t in tracks:
-        name = t["name"]
-        seen[name] = seen.get(name, 0) + 1
-        out[name if seen[name] == 1 else f"{name} #{seen[name]}"] = t
-    return out
 
 
 def _load(path):

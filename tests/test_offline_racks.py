@@ -178,7 +178,7 @@ def test_instrument_rack_edition_is_suite(instrument_rack):
 
 
 def test_drum_rack_pad_note_mapping(drum_rack):
-    data, err = r._load(drum_rack)
+    data, err = r._load(drum_rack, detail=True)
     assert err is None
     assert data["is_drum_rack"] is True
     pads = data["drum_pads"]
@@ -264,7 +264,7 @@ def test_real_factory_drum_rack_parses():
     path = _find_real_drum_rack()
     if path is None:
         pytest.skip("no factory drum-rack .adg installed on this machine")
-    data, err = r._load(path)
+    data, err = r._load(path, detail=True)
     assert err is None, err
     assert data["is_drum_rack"] is True
     assert len(data["drum_pads"]) > 0

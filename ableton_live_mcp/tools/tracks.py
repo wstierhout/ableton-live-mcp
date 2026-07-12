@@ -245,8 +245,6 @@ def create_take_lane(ctx: Context, track_index: int) -> str:
 def get_group_info(ctx: Context, track_index: int) -> str:
     """Report a track's group state: whether it is a foldable group track, whether
     it is inside a group, its fold state, and its parent group's name."""
-    import json
-
     r = get_ableton_connection().send_command("get_group_info", {"track_index": track_index})
     return json.dumps(r, indent=2)
 
