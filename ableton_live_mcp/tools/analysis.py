@@ -112,6 +112,47 @@ def analyze_mix(ctx: Context) -> str:
     )
 
 
+_LAST_SNAPSHOT = {"data": None}
+
+
+def _snapshot_delta(prev, cur):
+    """Diff two get_session_snapshot results into a compact change dict."""
+    changes = {}
+    for k in ("tempo", "time_signature", "is_playing"):
+        if prev.get(k) != cur.get(k):
+            changes[k] = {"from": prev.get(k), "to": cur.get(k)}
+    pa = {t["name"]: t for t in prev.get("tracks", [])}
+    cb = {t["name"]: t for t in cur.get("tracks", [])}
+    changes["tracks_added"] = [n for n in cb if n not in pa]
+    changes["tracks_removed"] = [n for n in pa if n not in cb]
+    modified = []
+    for name in pa.keys() & cb.keys():
+        a, b = pa[name], cb[name]
+        delta = {
+            k: {"from": a.get(k), "to": b.get(k)}
+            for k in ("muted", "soloed", "armed", "volume", "clips", "devices")
+            if a.get(k) != b.get(k)
+        }
+        if delta:
+            modified.append({"track": name, **delta})
+    changes["tracks_modified"] = modified
+    return changes
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def session_diff(ctx: Context) -> str:
+    """Report what changed in the set since the LAST time you called this tool:
+    tempo/time-signature/play-state, tracks added or removed, and per-track volume,
+    mute, solo, arm, clip-count, and device changes. The first call records a
+    baseline (no diff). Call it before and after an edit to verify it took effect."""
+    cur = get_ableton_connection().send_command("get_session_snapshot")
+    prev = _LAST_SNAPSHOT["data"]
+    _LAST_SNAPSHOT["data"] = cur
+    if prev is None:
+        return json.dumps({"baseline": True, "track_count": cur.get("track_count")}, indent=2)
+    return json.dumps({"changes": _snapshot_delta(prev, cur)}, indent=2)
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def describe_capabilities(ctx: Context) -> str:
     """A high-level map of this server: the tool groups and what each covers, plus

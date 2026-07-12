@@ -297,6 +297,9 @@ class AbletonMCP(ControlSurface):
         "delete_device": lambda s, p: s._delete_device(s._req(p, "track_index"), s._req(p, "device_index")),
         "create_take_lane": lambda s, p: s._create_take_lane(s._req(p, "track_index")),
         "set_simpler_playback_mode": lambda s, p: s._set_simpler_playback_mode(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "mode")),
+        "set_fold_state": lambda s, p: s._set_fold_state(s._req(p, "track_index"), p.get("folded", True)),
+        "try_save_project": lambda s, p: s._try_save_project(),
+        "set_device_routing": lambda s, p: s._set_device_routing(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "field"), s._req(p, "display_name")),
     }
 
     _READONLY_COMMANDS = {
@@ -322,6 +325,8 @@ class AbletonMCP(ControlSurface):
         "get_rack_chains": lambda s, p: s._get_rack_chains(s._req(p, "track_index"), s._req(p, "device_index")),
         "get_drum_pads": lambda s, p: s._get_drum_pads(s._req(p, "track_index"), s._req(p, "device_index")),
         "get_session_snapshot": lambda s, p: s._get_session_snapshot(),
+        "get_group_info": lambda s, p: s._get_group_info(s._req(p, "track_index")),
+        "get_device_routing": lambda s, p: s._get_device_routing(s._req(p, "track_index"), s._req(p, "device_index")),
     }
 
     # Commands whose main-thread work can exceed the default 10 s budget.
@@ -813,7 +818,8 @@ class AbletonMCP(ControlSurface):
                     "color": clip.color,
                     "is_midi_clip": clip.is_midi_clip,
                     "is_audio_clip": clip.is_audio_clip,
-                    "is_playing": clip.is_playing
+                    "is_playing": clip.is_playing,
+                    "file_path": getattr(clip, "file_path", None) if clip.is_audio_clip else None
                 })
 
             return {
@@ -1327,7 +1333,8 @@ class AbletonMCP(ControlSurface):
 
     def _create_audio_track(self, index):
         self._song.create_audio_track(index)
-        return {"track_count": len(self._song.tracks)}
+        new_index = len(self._song.tracks) - 1 if index == -1 else index
+        return {"index": new_index, "track_count": len(self._song.tracks)}
 
     def _get_return_tracks(self):
         return {"return_tracks": [{"index": i, "name": t.name}
@@ -1848,6 +1855,62 @@ class AbletonMCP(ControlSurface):
             raise Exception(f"Device {device_index} on track {track_index} is not a Simpler")
         device.playback_mode = int(mode)
         return {"device": device.name, "playback_mode": device.playback_mode}
+
+    def _get_group_info(self, track_index):
+        t = self._get_track(track_index)
+        grouped = bool(getattr(t, "is_grouped", False))
+        return {
+            "name": t.name,
+            "is_foldable": bool(t.is_foldable),
+            "is_grouped": grouped,
+            "fold_state": bool(t.fold_state) if t.is_foldable else None,
+            "group_track": t.group_track.name if grouped and t.group_track else None,
+        }
+
+    def _set_fold_state(self, track_index, folded):
+        t = self._get_track(track_index)
+        if not t.is_foldable:
+            raise Exception(f"Track '{t.name}' is not a group track")
+        t.fold_state = bool(folded)
+        return {"name": t.name, "fold_state": bool(t.fold_state)}
+
+    def _try_save_project(self):
+        song = self._song
+        if not hasattr(song, "save_project"):
+            return {"available": False, "note": "song.save_project is not in this Live version's LOM"}
+        try:
+            song.save_project()
+            return {"available": True, "saved": True}
+        except Exception as e:
+            return {"available": True, "saved": False, "error": str(e)}
+
+    def _get_device_routing(self, track_index, device_index):
+        dev = self._get_device(track_index, device_index)
+        if not hasattr(dev, "input_routing_type"):
+            raise Exception(f"Device '{dev.name}' has no audio input routing (not sidechain-capable)")
+        chan = getattr(dev, "input_routing_channel", None)
+        return {
+            "device": dev.name,
+            "input_routing_type": dev.input_routing_type.display_name if dev.input_routing_type else None,
+            "available_input_routing_types": [r.display_name for r in dev.available_input_routing_types],
+            "input_routing_channel": chan.display_name if chan else None,
+            "available_input_routing_channels": [
+                c.display_name for c in getattr(dev, "available_input_routing_channels", [])
+            ],
+        }
+
+    def _set_device_routing(self, track_index, device_index, field, display_name):
+        dev = self._get_device(track_index, device_index)
+        if field not in ("input_routing_type", "input_routing_channel"):
+            raise Exception("field must be input_routing_type or input_routing_channel")
+        options = list(getattr(dev, "available_" + field + "s"))
+        match = next((o for o in options if o.display_name == display_name), None)
+        if match is None:
+            raise Exception(
+                f"No {field} '{display_name}'. Options: {[o.display_name for o in options]}"
+            )
+        setattr(dev, field, match)
+        return {"device": dev.name, field: getattr(dev, field).display_name}
 
     def _set_arrangement_overdub(self, enabled):
         self._song.arrangement_overdub = bool(enabled)

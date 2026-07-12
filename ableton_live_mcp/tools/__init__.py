@@ -20,8 +20,13 @@ _ALL = [
     "arrangement",
     "generators",
     "generators_advanced",
+    "motif",
     "offline",
+    "offline_racks",
     "analysis",
+    "keys",
+    "device_kb",
+    "audio",
     "recipes",
     "prompts",
 ]

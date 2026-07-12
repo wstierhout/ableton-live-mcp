@@ -336,3 +336,12 @@ def get_session_snapshot(ctx: Context) -> str:
     names, plus return-track names. Prefer this over many get_track_info calls."""
     r = get_ableton_connection().send_command("get_session_snapshot")
     return json.dumps(r, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def save_set(ctx: Context) -> str:
+    """Save the current Live set to its existing file, if the Live API supports it
+    (it does not on most versions). Returns whether the API call is available and
+    whether the save succeeded. To save under a new name/path, use the GUI Save-As."""
+    r = get_ableton_connection().send_command("try_save_project")
+    return json.dumps(r, indent=2)
