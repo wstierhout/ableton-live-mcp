@@ -238,3 +238,36 @@ def set_simpler_playback_mode(ctx: Context, track_index: int, device_index: int,
         {"track_index": track_index, "device_index": device_index, "mode": mode},
     )
     return f"Simpler '{r.get('device')}' playback mode: {r.get('playback_mode')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_device_routing(ctx: Context, track_index: int, device_index: int) -> str:
+    """Read a device's audio-input (sidechain) routing: current input type/channel
+    and the available options. Only sidechain-capable devices (Compressor, Gate)
+    have this. Use the options with set_device_routing to pick a sidechain source."""
+    import json
+
+    r = get_ableton_connection().send_command(
+        "get_device_routing", {"track_index": track_index, "device_index": device_index}
+    )
+    return json.dumps(r, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_device_routing(
+    ctx: Context, track_index: int, device_index: int, field: str, display_name: str
+) -> str:
+    """Set a device's sidechain audio input. `field` is "input_routing_type" (the
+    source track/return) or "input_routing_channel" (Pre FX / Post FX / Post Mixer);
+    `display_name` is one of the options from get_device_routing. For ducking, also
+    enable the device's Sidechain parameter via set_device_parameter."""
+    r = get_ableton_connection().send_command(
+        "set_device_routing",
+        {
+            "track_index": track_index,
+            "device_index": device_index,
+            "field": field,
+            "display_name": display_name,
+        },
+    )
+    return f"'{r.get('device')}' {field}: {r.get(field)}"

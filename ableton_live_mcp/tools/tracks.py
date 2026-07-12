@@ -239,3 +239,23 @@ def create_take_lane(ctx: Context, track_index: int) -> str:
     track). Returns the new take-lane count."""
     r = get_ableton_connection().send_command("create_take_lane", {"track_index": track_index})
     return f"'{r.get('track')}' now has {r.get('take_lane_count')} take lanes"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_group_info(ctx: Context, track_index: int) -> str:
+    """Report a track's group state: whether it is a foldable group track, whether
+    it is inside a group, its fold state, and its parent group's name."""
+    import json
+
+    r = get_ableton_connection().send_command("get_group_info", {"track_index": track_index})
+    return json.dumps(r, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def set_fold_state(ctx: Context, track_index: int, folded: bool = True) -> str:
+    """Fold (collapse) or unfold a group track. Errors if the track is not a group
+    track (see get_group_info)."""
+    r = get_ableton_connection().send_command(
+        "set_fold_state", {"track_index": track_index, "folded": folded}
+    )
+    return f"'{r.get('name')}' fold_state: {r.get('fold_state')}"

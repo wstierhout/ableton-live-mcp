@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.6.0
+
+- Key/scale detection (Krumhansl-Kessler): `detect_clip_key`, `detect_track_key`,
+  `detect_session_key`, and offline `als_detect_key` return tonic, mode, and
+  confidence, so a detected key can feed the generators.
+- `record_section`: bounce a section of the arrangement to a WAV without the Export
+  dialog (arms a resampling/routed audio track and records in real time), so an
+  agent can analyze an internal signal.
+- Sidechain routing: `get_device_routing` / `set_device_routing` set a compressor's
+  sidechain source over the Live API.
+- Motif transforms (`transform_clip`: invert, retrograde, augment, transpose) and
+  minimalist generators (`generate_phase`, `generate_additive`).
+- Offline `.adg`/`.adv` rack and preset parser with Suite/Standard edition detection
+  (`adg_summary`, `adg_analyze`, `adg_edition`).
+- `session_diff` (what changed since the last call), `describe_device` /
+  `list_known_devices` (device knowledge base with linear-vs-curve unit taxonomy),
+  `get_group_info` / `set_fold_state` (group tracks), and `save_set` (which confirms
+  the Live API cannot save on 12.4, so Save stays GUI-only).
+- 18 more genre progressions.
+- 149 tools. New tools verified against Ableton Live 12.4.
+
 ## 1.5.0
 
 - `analyze_mix`: scan the live set for likely mix problems (several tracks with no
