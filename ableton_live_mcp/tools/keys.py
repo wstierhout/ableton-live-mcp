@@ -195,6 +195,27 @@ def detect_clip_key(
     )
 
 
+def _pool_track_notes(conn, track_index, info):
+    """Pool the notes of every Session clip on a track (skipping empty/audio slots).
+    `info` is the track's get_track_info result. Returns (notes, clips_used)."""
+    notes = []
+    clips_used = 0
+    for slot in info.get("clip_slots", []):
+        if not slot.get("has_clip"):
+            continue
+        try:
+            raw = conn.send_command(
+                "get_clip_notes", {"track_index": track_index, "clip_index": slot.get("index")}
+            )
+        except Exception:
+            continue  # audio clip or unreadable slot: skip, keep pooling MIDI
+        added = _normalize_notes(raw.get("notes", []))
+        if added:
+            clips_used += 1
+            notes.extend(added)
+    return notes, clips_used
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def detect_track_key(ctx: Context, track_index: int, weight: str = "duration") -> str:
     """Detect the key/scale of a whole track by pooling the notes of every
@@ -203,22 +224,7 @@ def detect_track_key(ctx: Context, track_index: int, weight: str = "duration") -
     "velocity", "product", "count"). Reads only; changes nothing."""
     conn = get_ableton_connection()
     info = conn.send_command("get_track_info", {"track_index": track_index})
-    notes = []
-    clips_used = 0
-    for slot in info.get("clip_slots", []):
-        if not slot.get("has_clip"):
-            continue
-        clip_index = slot.get("index")
-        try:
-            raw = conn.send_command(
-                "get_clip_notes", {"track_index": track_index, "clip_index": clip_index}
-            )
-        except Exception:
-            continue  # audio clip or unreadable slot: skip, keep pooling MIDI
-        added = _normalize_notes(raw.get("notes", []))
-        if added:
-            clips_used += 1
-            notes.extend(added)
+    notes, clips_used = _pool_track_notes(conn, track_index, info)
     result = detect_key(notes, weight=weight)
     return json.dumps(
         {
@@ -238,30 +244,18 @@ def detect_session_key(ctx: Context, weight: str = "duration") -> str:
     center of the arrangement as a whole. `weight` selects the histogram
     weighting ("duration", "velocity", "product", "count"). Reads only."""
     conn = get_ableton_connection()
-    session = conn.send_command("get_session_info")
+    # One snapshot gives track types, so we only fetch clip slots for MIDI tracks.
+    snapshot = conn.send_command("get_session_snapshot")
     notes = []
     tracks_used = 0
-    for track_index in range(int(session.get("track_count", 0) or 0)):
-        info = conn.send_command("get_track_info", {"track_index": track_index})
-        if not info.get("is_midi_track"):
+    for track in snapshot.get("tracks", []):
+        if track.get("type") != "midi":
             continue
-        track_had_notes = False
-        for slot in info.get("clip_slots", []):
-            if not slot.get("has_clip"):
-                continue
-            try:
-                raw = conn.send_command(
-                    "get_clip_notes",
-                    {"track_index": track_index, "clip_index": slot.get("index")},
-                )
-            except Exception:
-                continue
-            added = _normalize_notes(raw.get("notes", []))
-            if added:
-                track_had_notes = True
-                notes.extend(added)
-        if track_had_notes:
+        info = conn.send_command("get_track_info", {"track_index": track["index"]})
+        pooled, _ = _pool_track_notes(conn, track["index"], info)
+        if pooled:
             tracks_used += 1
+            notes.extend(pooled)
     result = detect_key(notes, weight=weight)
     return json.dumps({"tracks_analyzed": tracks_used, **result}, indent=2)
 

@@ -98,10 +98,9 @@ notes, overwrite an arrangement region), so save your work before a big session.
 
 The server registers 153 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
-`ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups: `session`, `tracks`,
-`clips`, `devices`, `browser`, `arrangement`, `generators`, `generators_advanced`,
-`motif`, `offline`, `offline_racks`, `analysis`, `keys`, `device_kb`, `audio`,
-`recipes`. Unset loads everything.
+`ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups (each may span several modules): `session`, `tracks`, `clips`, `devices`,
+`browser`, `arrangement`, `generators`, `audio`, `analysis`, `offline`, `recipes`.
+Unset loads everything.
 
 ## Conventions
 

@@ -245,8 +245,6 @@ def get_device_routing(ctx: Context, track_index: int, device_index: int) -> str
     """Read a device's audio-input (sidechain) routing: current input type/channel
     and the available options. Only sidechain-capable devices (Compressor, Gate)
     have this. Use the options with set_device_routing to pick a sidechain source."""
-    import json
-
     r = get_ableton_connection().send_command(
         "get_device_routing", {"track_index": track_index, "device_index": device_index}
     )
