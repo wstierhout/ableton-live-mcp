@@ -10,7 +10,7 @@ def test_tool_registration():
     tools = asyncio.run(mcp.list_tools())
     names = [t.name for t in tools]
     assert len(names) == len(set(names)), "duplicate tool names"
-    assert len(names) == 149, f"expected 149 tools, README/CHANGELOG say 149, got {len(names)}"
+    assert len(names) == 153, f"expected 153 tools, README/CHANGELOG say 153, got {len(names)}"
     for expected in (
         "get_session_info",
         "set_track_volume",
@@ -25,5 +25,7 @@ def test_tool_registration():
         "detect_session_key",
         "record_section",
         "adg_analyze",
+        "als_details",
+        "preview_browser_item",
     ):
         assert expected in names

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.0
+
+- Browser sample preview: `preview_browser_item` / `stop_browser_preview` audition a
+  sample or preset without loading it onto a track.
+- `als_details`: read locators and per-track fader volume, pan, and automation-lane
+  count from a saved `.als`; `als_diff` now reports volume/pan/automation changes
+  between versions.
+- `get_scale_info`: read the song scale, root, intervals, and tuning system.
+- Three more guided prompts: `start_a_track`, `sound_design`, `analyze_and_improve`.
+- 153 tools.
+
 ## 1.6.0
 
 - Key/scale detection (Krumhansl-Kessler): `detect_clip_key`, `detect_track_key`,

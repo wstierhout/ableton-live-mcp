@@ -194,6 +194,11 @@ def _track(elem, index):
         "muted": _flag(elem.find(".//Mute")),
         "soloed": _flag(elem.find(".//Solo")),
         "color_index": _inum(elem.find("ColorIndex")),
+        "volume": _fnum(elem.find(".//Mixer/Volume/Manual")),
+        "pan": _fnum(elem.find(".//Mixer/Pan/Manual")),
+        "automation_lanes": len(
+            elem.findall(".//AutomationEnvelopes/Envelopes/AutomationEnvelope")
+        ),
         "devices": _devices(elem),
         "clips": clips,
         "note_count": sum(c["note_count"] for c in clips),
@@ -222,6 +227,10 @@ def _parse(path):
 
     master_elem = live_set.find("MainTrack") or live_set.find("MasterTrack")
     scenes = [_val(s.find("Name"), "") or "" for s in live_set.findall(".//Scenes/Scene")]
+    locators = [
+        {"time": _fnum(loc.find("Time")), "name": _val(loc.find("Name"), "") or ""}
+        for loc in live_set.findall(".//Locators/Locators/Locator")
+    ]
 
     return {
         "path": path,
@@ -236,6 +245,7 @@ def _parse(path):
         "tracks": tracks,
         "master": _track(master_elem, -1) if master_elem is not None else None,
         "scenes": scenes,
+        "locators": locators,
     }
 
 
@@ -393,10 +403,39 @@ def als_diff(ctx: Context, path_a: str, path_b: str) -> str:
             delta["note_count"] = {"from": ta["note_count"], "to": tb["note_count"]}
         if ta["muted"] != tb["muted"]:
             delta["muted"] = {"from": ta["muted"], "to": tb["muted"]}
+        for field in ("volume", "pan", "automation_lanes"):
+            va, vb = ta.get(field), tb.get(field)
+            if va != vb and not (va is None and vb is None):
+                delta[field] = {"from": va, "to": vb}
         if delta:
             modified.append({"track": name, **delta})
     changes["tracks_modified"] = modified
+    if a.get("locators") != b.get("locators"):
+        changes["locators"] = {"from": a.get("locators"), "to": b.get("locators")}
     return json.dumps({"a": path_a, "b": path_b, "changes": changes}, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def als_details(ctx: Context, path: str) -> str:
+    """Read mixing and arrangement detail from a saved .als, offline: the set's
+    locators (name + beat time) and each track's fader volume, pan, and number of
+    automation lanes. Complements als_summary for reviewing a mix without Live."""
+    data, err = _load(path)
+    if err:
+        raise ValueError(err)
+    tracks = [
+        {
+            "index": t["index"],
+            "name": t["name"],
+            "volume": t["volume"],
+            "pan": t["pan"],
+            "automation_lanes": t["automation_lanes"],
+        }
+        for t in data["tracks"]
+    ]
+    return json.dumps(
+        {"path": data["path"], "locators": data["locators"], "tracks": tracks}, indent=2
+    )
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))

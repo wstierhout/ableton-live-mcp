@@ -183,3 +183,19 @@ def search_browser(
         "search_browser", params(query=query, max_results=max_results, category=category)
     )
     return json.dumps(result, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def preview_browser_item(ctx: Context, item_uri: str) -> str:
+    """Audition a browser item (a sample, instrument, or preset) through Live's
+    preview tab WITHOUT loading it onto a track. `item_uri` comes from
+    search_browser or get_browser_items_at_path. Use stop_browser_preview to stop."""
+    r = get_ableton_connection().send_command("preview_browser_item", {"item_uri": item_uri})
+    return f"Previewing: {r.get('previewing')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+def stop_browser_preview(ctx: Context) -> str:
+    """Stop the browser preview started by preview_browser_item."""
+    get_ableton_connection().send_command("stop_browser_preview")
+    return "Preview stopped"

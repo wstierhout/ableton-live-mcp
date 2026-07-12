@@ -338,6 +338,15 @@ def get_session_snapshot(ctx: Context) -> str:
     return json.dumps(r, indent=2)
 
 
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def get_scale_info(ctx: Context) -> str:
+    """Read the song's scale and tuning: scale name, root note, scale intervals, and
+    the active tuning system (microtonal, Live 12.3+) if any. Set the scale with
+    set_song_scale; tune device parameters (e.g. Wavetable) with set_device_parameter."""
+    r = get_ableton_connection().send_command("get_scale_info")
+    return json.dumps(r, indent=2)
+
+
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def save_set(ctx: Context) -> str:
     """Save the current Live set to its existing file, if the Live API supports it
