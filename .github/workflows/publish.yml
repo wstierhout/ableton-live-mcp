@@ -9,7 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
       - run: uvx ruff check .
       - run: python3 -m py_compile ableton_live_mcp/remote_script/__init__.py
@@ -22,7 +22,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
@@ -34,7 +34,7 @@ jobs:
       id-token: write   # OIDC auth to the MCP Registry
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Wait for the version to appear on PyPI
         run: |
           VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)

@@ -1,16 +1,35 @@
 [project]
 name = "mcp-server-ableton-live"
 version = "1.7.2"
-description = "Ableton Live integration through the Model Context Protocol"
+description = "Control Ableton Live with AI using typed MCP tools for MIDI, mixing, mastering, and offline .als analysis"
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = [
+    "ableton",
+    "ableton-live",
+    "ai-music",
+    "daw",
+    "mcp",
+    "midi",
+    "model-context-protocol",
+    "music-production",
+]
 authors = [
     {name = "Wouter Stierhout"},
 ]
 license = "MIT"
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
 ]
 dependencies = [
     "mcp[cli]>=1.9.0,<2",
@@ -32,6 +51,9 @@ packages = ["ableton_live_mcp", "ableton_live_mcp.tools", "ableton_live_mcp.remo
 
 [project.urls]
 "Homepage" = "https://github.com/wstierhout/ableton-live-mcp"
+"Documentation" = "https://github.com/wstierhout/ableton-live-mcp#readme"
+"Changelog" = "https://github.com/wstierhout/ableton-live-mcp/blob/main/CHANGELOG.md"
+"Glama" = "https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp"
 "Bug Tracker" = "https://github.com/wstierhout/ableton-live-mcp/issues"
 [tool.ruff]
 line-length = 100

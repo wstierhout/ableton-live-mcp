@@ -4,6 +4,14 @@
 
 Audit pass across the whole server. 154 tools.
 
+- Discovery metadata: added `glama.json`, a Glama quality badge, richer PyPI
+  keywords/project links, and a direct-answer FAQ. Reworked all 29 tools Glama
+  rated B/C with documented input schemas, constraints, side effects, sibling-tool
+  guidance, and accurate idempotent/destructive annotations.
+- Official MCP Registry publishing fixed: `server.json` now keeps its description
+  within the schema's 100-character limit and includes `websiteUrl`. The oversized
+  description had caused every Registry publish after 1.1.1 to fail even though
+  the corresponding PyPI releases succeeded.
 - New tool `delete_return_track` (the handler already existed; the tool was missing).
 - Offline `.als`: track `muted` is read from the track activator (was always
   false), `soloed` from the track-level solo field (was reading a sampler zone),

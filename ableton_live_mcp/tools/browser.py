@@ -7,7 +7,7 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import AbletonCommandError, get_ableton_connection, logger
-from ._util import params
+from ._util import BrowserItemUri, BrowserPath, TrackIndex, params
 
 
 def _translate_browser_error(e: Exception, doing: str) -> Exception:
@@ -111,16 +111,20 @@ def get_browser_items_at_path(ctx: Context, path: str) -> str:
         raise _translate_browser_error(e, "getting browser items at path") from e
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def load_drum_kit(ctx: Context, track_index: int, rack_uri: str, kit_path: str) -> str:
-    """
-    Load a drum rack and then load a specific drum kit into it.
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def load_drum_kit(
+    ctx: Context,
+    track_index: TrackIndex,
+    rack_uri: BrowserItemUri,
+    kit_path: BrowserPath,
+) -> str:
+    """Load a Drum Rack, then the first loadable kit at a browser path.
 
-    Parameters:
-    - track_index: The index of the track to load on
-    - rack_uri: URI of the drum rack to load, as returned by search_browser
-                (e.g. 'query:Drums#Drum%20Rack')
-    - kit_path: Path to the drum kit inside the browser (e.g. 'drums/acoustic/kit1')
+    Use search_browser to obtain the rack URI and get_browser_items_at_path to
+    verify the kit path. This is a two-step mutation: it appends the rack first,
+    then loads the first loadable item found at `kit_path`. If path lookup fails,
+    the new empty rack remains on the track; repeated calls add more racks. Use
+    load_instrument_or_effect when one known browser URI is sufficient.
     """
     ableton = get_ableton_connection()
 

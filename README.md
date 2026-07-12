@@ -6,6 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/wstierhout/ableton-live-mcp)](https://github.com/wstierhout/ableton-live-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![Glama tool quality](https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp/badges/score.svg)](https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp)
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
 server that gives Claude, Cursor, Codex, or any MCP client 154 tools for building
@@ -156,6 +157,39 @@ uvx ruff check .               # lint
 
 CI runs lint, a byte-compile of the Remote Script, and the tests on Python 3.10 and
 3.12.
+
+## Frequently asked questions
+
+### What is the Ableton Live MCP Server?
+
+It is a local Model Context Protocol server that lets AI clients such as Claude,
+Cursor, and Codex inspect and control Ableton Live through typed tools. It can build
+tracks, edit MIDI, load and configure devices, arrange clips, mix a set, and analyze
+saved `.als` projects.
+
+### How is this different from other Ableton MCP servers?
+
+This server exposes 154 specific, validated tools rather than an arbitrary-code
+execution tool. It includes destructive/read-only hints, workflow prompts, built-in
+music generators, mixing and analysis tools, and offline `.als`/`.adg` inspection.
+The Remote Script and MCP package are versioned and tested together.
+
+### Can it work while Ableton Live is closed?
+
+The real-time control tools require Ableton Live and the bundled Remote Script to be
+running. The offline tools can summarize, inspect, lint, extract MIDI from, and diff
+saved `.als`, `.adg`, and `.adv` files without launching Live.
+
+### Which MCP clients are supported?
+
+Any client that can launch a local stdio MCP server can use it, including Claude
+Desktop, Claude Code, Cursor, Codex, and compatible IDEs. The canonical command is
+`uvx mcp-server-ableton-live`.
+
+### Is this an official Ableton product?
+
+No. It is an independent, open-source integration and is not affiliated with or
+endorsed by Ableton.
 
 ## Credits and license
 

@@ -6,12 +6,43 @@ they carry zero Live-API risk and always compose with the primitive tools.
 
 import json
 import random
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from ..app import mcp
 from ..connection import AbletonCommandError, get_ableton_connection
+from ._util import ClipIndex, TrackIndex
+
+ChordProgression = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description='Dash-, comma-, or space-separated chord symbols, e.g. "Dm7-G7-Cmaj7".',
+    ),
+]
+BeatsPerChord = Annotated[
+    float,
+    Field(gt=0, description="Positive number of beats allocated to each chord."),
+]
+MidiCenterPitch = Annotated[
+    int,
+    Field(ge=0, le=127, description="MIDI pitch around which chord voicings are centered."),
+]
+MidiVelocity = Annotated[
+    int,
+    Field(ge=1, le=127, description="Base MIDI note velocity (1-127)."),
+]
+StrumAmount = Annotated[
+    float,
+    Field(ge=0, description="Beat offset between chord tones; 0 produces block chords."),
+]
+ChordRhythm = Annotated[
+    Literal["held", "stabs", "quarters"],
+    Field(description="Chord rhythm: held, two stabs per slot, or quarter-note hits."),
+]
 
 # ── music theory tables ──────────────────────────────────────────────
 
@@ -272,25 +303,25 @@ def generate_drum_pattern(
     return f"Wrote {n} notes ({style}, {bars} bars) to track {track_index} slot {clip_index}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
 def generate_chord_progression(
     ctx: Context,
-    track_index: int,
-    clip_index: int,
-    progression: str,
-    beats_per_chord: float = 4.0,
-    center_pitch: int = 60,
-    velocity: int = 62,
-    strum: float = 0.02,
-    rhythm: str = "held",
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    progression: ChordProgression,
+    beats_per_chord: BeatsPerChord = 4.0,
+    center_pitch: MidiCenterPitch = 60,
+    velocity: MidiVelocity = 62,
+    strum: StrumAmount = 0.02,
+    rhythm: ChordRhythm = "held",
 ) -> str:
-    """Write a chord progression into a Session clip. REPLACES existing notes.
+    """Generate voiced chords and write them into one Session-view MIDI clip.
 
-    progression: dash- or comma-separated symbols, e.g. "Am9-Fmaj7-Cmaj9-G13"
-    or "Dm7, G7, Cmaj7". Qualities: maj7/m7/m9/9/13/7#9/sus4/dim/add9 etc.
-    rhythm: "held" (one chord per slot), "stabs" (hit on 1 and the and-of-3),
-    "quarters" (four hits per bar, velocity-tapered).
-    strum: seconds-ish stagger between chord tones (0 = block chord).
+    DESTRUCTIVE: creates a clip when the slot is empty; otherwise resizes its loop
+    and replaces every existing note. The track must accept MIDI. Progressions
+    accept dash/comma/space-separated symbols such as `Am9-Fmaj7-Cmaj9-G13`;
+    supported qualities include maj7, m7, m9, 9, 13, 7#9, sus4, dim, and add9.
+    Use add_notes_to_clip for exact notes or edit_notes to preserve existing ones.
     """
     symbols = _split_progression(progression)
     notes = []

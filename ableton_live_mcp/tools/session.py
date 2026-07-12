@@ -7,14 +7,28 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from ._util import params
+from ._util import (
+    ArrangementBeat,
+    DisplayName,
+    OptionalDisplayName,
+    PositiveBeatLength,
+    SceneIndex,
+    TimeSignatureDenominator,
+    TimeSignatureNumerator,
+    ToggleState,
+    params,
+)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def get_session_info(ctx: Context) -> str:
-    """Get detailed information about the current Ableton session
+    """Return global Live-set and transport state without modifying the set.
 
-    Parameters:
+    Includes tempo, song time signature, playback position/state, Arrangement
+    loop, track/return/scene counts, scene names, key/scale, record mode, launch
+    quantization, Master volume/pan, and Live version. Use get_track_info for a
+    single track's clips/devices, or get_session_snapshot for a compact overview
+    of every track.
     """
     ableton = get_ableton_connection()
     result = ableton.send_command("get_session_info")
@@ -63,10 +77,14 @@ def create_scene(ctx: Context, index: int = -1) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def create_locator(ctx: Context, time: float, name: str | None = None) -> str:
-    """Create an arrangement locator (marker) at a beat time, optionally named.
-    SIDE EFFECT: moves the arrangement playhead to `time` (Live places cues at
-    the playhead)."""
+def create_locator(ctx: Context, time: ArrangementBeat, name: OptionalDisplayName = None) -> str:
+    """Create or rename an Arrangement locator at an absolute beat position.
+
+    SIDE EFFECT: first moves the Arrangement playhead to `time`, because Live
+    creates cues at the playhead. If a locator already exists there, it is reused
+    and renamed when `name` is provided. Use set_arrangement_time when only the
+    playhead should move, and get_locators to inspect existing markers.
+    """
     conn = get_ableton_connection()
     # Move the playhead first (separate command) so it settles before the cue is
     # placed - set_or_delete_cue reads the live playhead position.
@@ -75,34 +93,63 @@ def create_locator(ctx: Context, time: float, name: str | None = None) -> str:
     return f"Locator '{r.get('name')}' at beat {r.get('time')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def fire_scene(ctx: Context, scene_index: int) -> str:
-    """Launch a scene (fires every clip in that row)."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def fire_scene(ctx: Context, scene_index: SceneIndex) -> str:
+    """Launch a Session-view scene using Live's launch quantization.
+
+    This fires the row's clips together and can replace or stop clips currently
+    playing on the affected tracks according to each slot's launch behavior.
+    Use fire_clip to launch only one track's clip, or start_playback when the
+    intent is Arrangement transport rather than Session launching.
+    """
     get_ableton_connection().send_command("fire_scene", {"scene_index": scene_index})
     return f"Fired scene {scene_index}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_scene_name(ctx: Context, scene_index: int, name: str) -> str:
-    """Rename a scene."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_scene_name(ctx: Context, scene_index: SceneIndex, name: DisplayName) -> str:
+    """Rename one Session-view scene without changing any clips in the row.
+
+    Use set_clip_name for an individual clip. Repeating the same name has no
+    additional effect.
+    """
     get_ableton_connection().send_command(
         "set_scene_name", {"scene_index": scene_index, "name": name}
     )
     return f"Scene {scene_index} named '{name}'"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_time_signature(ctx: Context, numerator: int, denominator: int) -> str:
-    """Set the song time signature (e.g. 4/4, 3/4, 6/8)."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_time_signature(
+    ctx: Context,
+    numerator: TimeSignatureNumerator,
+    denominator: TimeSignatureDenominator,
+) -> str:
+    """Set the Live set's global time signature, such as 4/4, 3/4, or 6/8.
+
+    This changes bar/grid and metronome interpretation but does not rewrite clip
+    notes. Use set_clip_signature instead when only one clip needs a different
+    meter for polymeter. Repeating the same signature has no additional effect.
+    """
     r = get_ableton_connection().send_command(
         "set_time_signature", {"numerator": numerator, "denominator": denominator}
     )
     return f"Time signature {r.get('numerator')}/{r.get('denominator')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_loop(ctx: Context, start: float, length: float, enabled: bool = True) -> str:
-    """Set the arrangement loop region (in beats) and enable/disable looping."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_loop(
+    ctx: Context,
+    start: ArrangementBeat,
+    length: PositiveBeatLength,
+    enabled: ToggleState = True,
+) -> str:
+    """Set the global Arrangement loop region and its enabled state.
+
+    `start` is an absolute beat and `length` is a positive beat duration. The
+    region is updated even when `enabled=false`; playback simply will not repeat
+    it. Use set_clip_loop for a Session clip's loop braces, not the Arrangement.
+    """
     r = get_ableton_connection().send_command(
         "set_loop", {"start": start, "length": length, "enabled": enabled}
     )
@@ -111,7 +158,13 @@ def set_loop(ctx: Context, start: float, length: float, enabled: bool = True) ->
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def undo(ctx: Context) -> str:
-    """Undo the last action in Live."""
+    """Revert the most recent undoable Live-set action.
+
+    This mutates the set and may remove newly created content or restore deleted
+    content. It has no target parameter: Live chooses the top undo-history entry.
+    Use redo to reapply an accidental undo. Prefer batch_commands for related
+    edits so one undo reverts the group.
+    """
     get_ableton_connection().send_command("undo")
     return "Undone"
 
@@ -185,10 +238,15 @@ def back_to_arranger(ctx: Context) -> str:
     return "Playback control returned to the Arrangement"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_record_mode(ctx: Context, enabled: bool) -> str:
-    """Toggle Arrangement record. With record_mode on, start_playback records
-    armed tracks into the Arrangement."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_record_mode(ctx: Context, enabled: ToggleState) -> str:
+    """Arm or disarm Live's global Arrangement Record state.
+
+    `true` enables Arrangement recording; `false` disables it. Enabling alone
+    does not record: arm the intended tracks with set_track_arm, then use
+    start_playback. Use set_session_record or trigger_session_record for Session
+    slots instead. Repeating the current state has no additional effect.
+    """
     r = get_ableton_connection().send_command("set_record_mode", {"enabled": enabled})
     return f"Arrangement record: {r.get('record_mode')}"
 
@@ -224,9 +282,14 @@ def delete_scene(ctx: Context, scene_index: int) -> str:
     return f"Scene deleted. Remaining: {r.get('scene_count')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def duplicate_scene(ctx: Context, scene_index: int) -> str:
-    """Duplicate a scene with all its clips - instant section variation."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def duplicate_scene(ctx: Context, scene_index: SceneIndex) -> str:
+    """Insert a copy of one Session scene, including every clip in its row.
+
+    This creates new content and increases the scene count; later scene indices
+    shift to make room. Use duplicate_track for a whole track or duplicate_clip_to
+    for one clip. Use the new scene as an editable section variation.
+    """
     r = get_ableton_connection().send_command("duplicate_scene", {"scene_index": scene_index})
     return f"Scene duplicated. Total: {r.get('scene_count')}"
 

@@ -7,15 +7,18 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
+from ._util import CrossfadeAssignment, PanValue, ToggleState, TrackIndex, TrackInsertIndex
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_track_info(ctx: Context, track_index: int) -> str:
-    """
-    Get detailed information about a specific track in Ableton.
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+def get_track_info(ctx: Context, track_index: TrackIndex) -> str:
+    """Return detailed state for one regular track without modifying the set.
 
-    Parameters:
-    - track_index: The index of the track to get information about
+    Includes name/type, mixer and arm/mute/solo state, sends, freeze/color state,
+    playing/fired slot indices, every Session slot's basic clip state, and the
+    device-chain names/types. Use get_session_info for global transport state,
+    get_device_parameters for parameter values, or get_clip_info for full clip
+    properties.
     """
     ableton = get_ableton_connection()
     result = ableton.send_command("get_track_info", {"track_index": track_index})
@@ -65,27 +68,42 @@ def set_track_volume(ctx: Context, track_index: int, volume: float) -> str:
     return f"Track {track_index} volume set to {result.get('volume')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_track_pan(ctx: Context, track_index: int, pan: float) -> str:
-    """Set track panning, -1.0 (left) to 1.0 (right)."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_track_pan(ctx: Context, track_index: TrackIndex, pan: PanValue) -> str:
+    """Set one regular track's stereo pan position; 0.0 is centered.
+
+    Live clamps the value to the track's native range. This changes mixer state,
+    not the audio file or clip content. Use set_master_device_parameter for a
+    device control, and set_crossfader for A/B crossfading.
+    """
     result = get_ableton_connection().send_command(
         "set_track_pan", {"track_index": track_index, "pan": pan}
     )
     return f"Track {track_index} pan set to {result.get('panning')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_track_mute(ctx: Context, track_index: int, mute: bool) -> str:
-    """Mute or unmute a track."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_track_mute(ctx: Context, track_index: TrackIndex, mute: ToggleState) -> str:
+    """Set one regular track's mute state (`true` mutes; `false` unmutes).
+
+    Muting silences that track in Live but preserves its clips, devices, and
+    mixer settings. Use set_track_solo to audition a track relative to the rest,
+    or stop_clip when only Session clip playback should stop.
+    """
     result = get_ableton_connection().send_command(
         "set_track_mute", {"track_index": track_index, "mute": mute}
     )
     return f"Track {track_index} mute: {result.get('mute')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_track_solo(ctx: Context, track_index: int, solo: bool) -> str:
-    """Solo or unsolo a track."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_track_solo(ctx: Context, track_index: TrackIndex, solo: ToggleState) -> str:
+    """Set one regular track's solo state (`true` solos; `false` unsolos).
+
+    Solo changes monitoring relative to other tracks and does not alter clip or
+    device content. Other tracks may remain soloed, so clear them separately when
+    exclusive auditioning is required. Use set_track_mute to silence this track.
+    """
     result = get_ableton_connection().send_command(
         "set_track_solo", {"track_index": track_index, "solo": solo}
     )
@@ -122,9 +140,14 @@ def delete_return_track(ctx: Context, return_index: int) -> str:
     return f"Return track deleted. Total returns: {r.get('return_track_count')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def create_audio_track(ctx: Context, index: int = -1) -> str:
-    """Create a new audio track. index -1 appends at the end."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def create_audio_track(ctx: Context, index: TrackInsertIndex = -1) -> str:
+    """Insert an empty audio track at a chosen position, or append with `-1`.
+
+    Non-negative indices insert before the current track at that position and
+    shift it and later track indices up. Use create_midi_track for instruments
+    and MIDI clips, or create_return_track for a shared send-effect bus.
+    """
     r = get_ableton_connection().send_command("create_audio_track", {"index": index})
     return f"Audio track created. Total tracks: {r.get('track_count')}"
 
@@ -144,9 +167,14 @@ def set_track_color(ctx: Context, track_index: int, color_index: int) -> str:
     return f"Track {track_index} color set"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def duplicate_track(ctx: Context, track_index: int) -> str:
-    """Duplicate a track along with its devices and clips."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def duplicate_track(ctx: Context, track_index: TrackIndex) -> str:
+    """Insert a copy of one regular track, including its devices and clips.
+
+    This creates new content and increases the track count; later track indices
+    shift to make room. Use duplicate_scene for a Session row or duplicate_clip_to
+    for one clip. Rename or edit the copy to create a variation.
+    """
     r = get_ableton_connection().send_command("duplicate_track", {"track_index": track_index})
     return f"Track duplicated. Total tracks: {r.get('track_count')}"
 
@@ -221,9 +249,14 @@ def set_crossfader(ctx: Context, value: float) -> str:
     return f"Crossfader: {r.get('crossfader')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_crossfade_assign(ctx: Context, track_index: int, assign: int) -> str:
-    """Assign a track to the crossfader: 0=A, 1=none, 2=B."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_crossfade_assign(ctx: Context, track_index: TrackIndex, assign: CrossfadeAssignment) -> str:
+    """Assign one regular track to crossfader side A, neither side, or side B.
+
+    This configures which side affects the track; it does not move the crossfader
+    or change track volume immediately. Use set_crossfader afterward to blend the
+    A/B groups. Repeating the same assignment has no additional effect.
+    """
     r = get_ableton_connection().send_command(
         "set_crossfade_assign", {"track_index": track_index, "assign": assign}
     )

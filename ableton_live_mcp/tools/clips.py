@@ -7,7 +7,15 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from ._util import params
+from ._util import (
+    ClipIndex,
+    ColorIndex,
+    DisplayName,
+    OptionalClipBeat,
+    OptionalToggleState,
+    TrackIndex,
+    params,
+)
 
 # Quantize grids, mirroring the Remote Script's _Q_BASE keys (sync-tested in
 # test_dispatch.py). The client pre-check saves a round trip on typos.
@@ -78,15 +86,14 @@ def add_notes_to_clip(
     return f"Added {len(notes)} notes to clip at track {track_index}, slot {clip_index}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str) -> str:
-    """
-    Set the name of a clip.
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_clip_name(
+    ctx: Context, track_index: TrackIndex, clip_index: ClipIndex, name: DisplayName
+) -> str:
+    """Rename an existing Session-view clip without changing its notes or audio.
 
-    Parameters:
-    - track_index: The index of the track containing the clip
-    - clip_index: The index of the clip slot containing the clip
-    - name: The new name for the clip
+    The slot must contain a clip. Use this for the clip label; use set_track_name
+    for the track label. Repeating the same name has no additional effect.
     """
     ableton = get_ableton_connection()
     ableton.send_command(
@@ -95,14 +102,14 @@ def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str) ->
     return f"Renamed clip at track {track_index}, slot {clip_index} to '{name}'"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def fire_clip(ctx: Context, track_index: int, clip_index: int) -> str:
-    """
-    Start playing a clip.
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def fire_clip(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
+    """Launch one existing Session-view clip using Live's launch quantization.
 
-    Parameters:
-    - track_index: The index of the track containing the clip
-    - clip_index: The index of the clip slot containing the clip
+    The slot must contain a clip. Launching it takes Session control of that
+    track and replaces any other playing Session clip on the same track; firing
+    an already-playing clip may retrigger it according to its launch settings.
+    Use fire_scene to launch a whole row, or continue_playing for transport only.
     """
     ableton = get_ableton_connection()
     ableton.send_command("fire_clip", {"track_index": track_index, "clip_index": clip_index})
@@ -124,17 +131,27 @@ def stop_clip(ctx: Context, track_index: int, clip_index: int) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-def delete_clip(ctx: Context, track_index: int, clip_index: int) -> str:
-    """Delete a Session-view clip from a clip slot."""
+def delete_clip(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
+    """Delete the existing Session-view clip in a slot, including its content.
+
+    This leaves the slot empty and does not shift other slot indices. It fails
+    for an empty slot. Use stop_clip if the intent is only to stop playback;
+    use undo immediately if the deletion was accidental.
+    """
     get_ableton_connection().send_command(
         "delete_clip", {"track_index": track_index, "clip_index": clip_index}
     )
     return f"Deleted clip at track {track_index}, slot {clip_index}"
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_clip_notes(ctx: Context, track_index: int, clip_index: int) -> str:
-    """Read back all MIDI notes in a Session clip."""
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+def get_clip_notes(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
+    """Return every MIDI note in an existing Session-view MIDI clip.
+
+    Each note includes pitch, start time, duration, velocity, and mute state;
+    newer Live versions may add expression fields. This is read-only and fails
+    for an empty slot or audio clip. Use get_clip_info for clip properties.
+    """
     result = get_ableton_connection().send_command(
         "get_clip_notes", {"track_index": track_index, "clip_index": clip_index}
     )
@@ -205,17 +222,24 @@ def set_clip_audio(
     return f"Applied: {json.dumps(r)}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def set_clip_loop(
     ctx: Context,
-    track_index: int,
-    clip_index: int,
-    start: float | None = None,
-    end: float | None = None,
-    start_marker: float | None = None,
-    looping: bool | None = None,
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    start: OptionalClipBeat = None,
+    end: OptionalClipBeat = None,
+    start_marker: OptionalClipBeat = None,
+    looping: OptionalToggleState = None,
 ) -> str:
-    """Set a clip's loop braces (start/end beats), start marker, and looping on/off."""
+    """Update selected loop and launch markers on one existing Session clip.
+
+    Provide at least one optional field; omitted fields stay unchanged. `start`
+    and `end` are loop-brace positions in clip-relative beats and end must be
+    after start. `start_marker` controls where non-looped launch begins;
+    `looping` enables or disables repetition. Use set_loop for the Arrangement's
+    global loop region, not a clip, and get_clip_info to inspect current values.
+    """
     opts = params(start=start, end=end, start_marker=start_marker, looping=looping)
     if not opts:
         raise ValueError("Provide at least one property to set")
@@ -247,9 +271,15 @@ def edit_notes(
     return f"Clip now has {r.get('note_count')} notes (added {r.get('added')})"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_clip_color(ctx: Context, track_index: int, clip_index: int, color_index: int) -> str:
-    """Set a clip's color by index (0-69 in Live's palette)."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_clip_color(
+    ctx: Context, track_index: TrackIndex, clip_index: ClipIndex, color_index: ColorIndex
+) -> str:
+    """Set an existing Session clip's palette color without changing its content.
+
+    This is a visual organization change only. Use set_track_color to recolor
+    the track header instead. Repeating the same color has no additional effect.
+    """
     get_ableton_connection().send_command(
         "set_clip_color",
         {"track_index": track_index, "clip_index": clip_index, "color_index": color_index},

@@ -7,7 +7,16 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from ._util import params
+from ._util import (
+    BrowserItemUri,
+    DeviceIndex,
+    DeviceParameter,
+    DeviceParameterValue,
+    ReturnIndex,
+    ToggleState,
+    TrackIndex,
+    params,
+)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -55,9 +64,20 @@ def set_device_parameter(
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_device_enabled(ctx: Context, track_index: int, device_index: int, enabled: bool) -> str:
-    """Enable or bypass a device on a track."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+def set_device_enabled(
+    ctx: Context,
+    track_index: TrackIndex,
+    device_index: DeviceIndex,
+    enabled: ToggleState,
+) -> str:
+    """Enable or bypass one device on a regular track.
+
+    `true` turns the device on; `false` bypasses its processing while preserving
+    the device and parameter values. This changes audible signal flow but not
+    clip content. Use set_track_mute to silence the whole track, or
+    set_device_parameter to change one control.
+    """
     r = get_ableton_connection().send_command(
         "set_device_enabled",
         {"track_index": track_index, "device_index": device_index, "enabled": enabled},
@@ -65,9 +85,15 @@ def set_device_enabled(ctx: Context, track_index: int, device_index: int, enable
     return f"{r.get('device')} enabled={r.get('enabled')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def load_device_to_return(ctx: Context, return_index: int, item_uri: str) -> str:
-    """Load a device/effect from the browser onto a return track."""
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+def load_device_to_return(ctx: Context, return_index: ReturnIndex, item_uri: BrowserItemUri) -> str:
+    """Append one loadable browser device or preset to a return track's chain.
+
+    Obtain `item_uri` from search_browser. Loading selects the return track in
+    Live and creates a new device, so repeated calls add duplicates. Prefer audio
+    effects on returns; use load_instrument_or_effect for a regular track or
+    load_device_to_master for the Master chain.
+    """
     r = get_ableton_connection().send_command(
         "load_device_to_return", {"return_index": return_index, "item_uri": item_uri}
     )
@@ -92,11 +118,20 @@ def get_master_device_parameters(ctx: Context, device_index: int) -> str:
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def set_master_device_parameter(
-    ctx: Context, device_index: int, parameter: str | int, value: float
+    ctx: Context,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    value: DeviceParameterValue,
 ) -> str:
-    """Set a parameter on a Master-track device by name or index."""
+    """Set one enabled parameter on a device in the Master track's chain.
+
+    Call get_master_device_parameters first and use its parameter name/index and
+    native min/max; out-of-range values are clamped. This affects the full mix.
+    Use set_device_parameter for a regular track or
+    set_return_device_parameter for a return track.
+    """
     return _set_param(
         "set_master_device_parameter",
         "master ",
@@ -106,11 +141,20 @@ def set_master_device_parameter(
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def set_return_device_parameter(
-    ctx: Context, return_index: int, device_index: int, parameter: str | int, value: float
+    ctx: Context,
+    return_index: ReturnIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    value: DeviceParameterValue,
 ) -> str:
-    """Set a parameter on a Return-track device by name or index."""
+    """Set one enabled parameter on a device in a return track's chain.
+
+    Call get_return_device_parameters first and use its parameter name/index and
+    native min/max; out-of-range values are clamped. Use set_device_parameter for
+    a regular track or set_master_device_parameter for the full-mix chain.
+    """
     return _set_param(
         "set_return_device_parameter",
         f"return {return_index} ",

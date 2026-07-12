@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
+from ._util import ClipIndex, DeviceIndex, DeviceParameter, TrackIndex
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -127,11 +128,21 @@ def write_automation(
     return f"Wrote {r.get('point_count')} automation points for {r.get('parameter')}"
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
 def clear_automation(
-    ctx: Context, track_index: int, clip_index: int, device_index: int, parameter: str | int
+    ctx: Context,
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
 ) -> str:
-    """Clear the clip automation envelope for a device parameter."""
+    """Delete one device parameter's entire automation envelope from a clip.
+
+    Resolve the device and parameter with get_device_parameters first. This
+    removes every automation point for that parameter, not a time range; manual
+    parameter state remains. Use write_automation to replace the envelope with
+    new points, or undo immediately to recover an accidental clear.
+    """
     r = get_ableton_connection().send_command(
         "clear_automation",
         {
