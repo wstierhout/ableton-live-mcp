@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 149 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 153 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
 a running Ableton Live set, plus offline tools that read and diff saved `.als`
 project files with Live closed.
@@ -74,16 +74,17 @@ an upright bass, and Rhodes chords, then put a limiter on the master at -1 dB."
 | Session and transport | session info, one-call session snapshot, play/stop, tempo, tap tempo, time signature, loop, locators and cue navigation, scenes, undo/redo, capture MIDI, song scale, global groove and swing, Ableton Link |
 | Tracks and mixer | create and delete MIDI, audio, and return tracks; delete devices; take lanes; group-track fold; volume, pan, mute, solo, arm, sends; input/output routing; meters |
 | Clips and notes | create clips, write and edit MIDI notes (with probability), quantize with strength, Groove Pool swing, loop, gain, pitch, warp mode |
-| Devices | browse and search by name, load instruments and effects onto any track including Master and Returns, read and set any parameter, sidechain routing, rack macro variations, Simpler sample slicing, per-pad drum control, curated device knowledge base |
+| Devices | browse and search by name, load instruments and effects onto any track including Master and Returns, read and set any parameter, sidechain routing, sample preview, rack macro variations, Simpler sample slicing, per-pad drum control, curated device knowledge base |
 | Arrangement | place clips on the timeline, read and delete arrangement clips, write clip automation |
 | Generators | drum patterns in 7 styles, euclidean rhythms, chord progressions, voice-led jazz voicings, 50-plus genre-aware progressions, voice-leading melodies, walking basslines, motif transforms (invert, retrograde, augment), minimalist processes, humanize, one-call session setup |
 | Batch | run many edits in one round trip and one undo step |
 | Audio and analysis | record a section to a WAV without the Export dialog, detect key and scale, scan the mix for problems, diff the session since the last check |
-| Offline (no Live) | summarize, list tracks, extract MIDI, detect key, diff two versions, lint a saved `.als`, and parse `.adg`/`.adv` racks with edition detection |
+| Offline (no Live) | summarize, list tracks, extract MIDI, detect key, read mixer and locator detail, diff two versions, lint a saved `.als`, and parse `.adg`/`.adv` racks with edition detection |
 | Recipes | scaffold a genre starter (lofi, house) in one call |
 
-There are also two workflow prompts (`make_a_beat`, `mix_and_master`) and a set of
-server instructions that teach the model the conventions before its first call:
+There are also five workflow prompts (`make_a_beat`, `mix_and_master`, `start_a_track`,
+`sound_design`, `analyze_and_improve`) and a set of server instructions that teach the
+model the conventions before its first call:
 0-based indices, beats for time, 0.85 volume equals 0 dB, and native ranges for
 device parameters.
 
@@ -95,7 +96,7 @@ notes, overwrite an arrangement region), so save your work before a big session.
 
 ## Focusing the toolset
 
-The server registers 149 tools. That is a lot for a model to choose from on a small
+The server registers 153 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups: `session`, `tracks`,
 `clips`, `devices`, `browser`, `arrangement`, `generators`, `generators_advanced`,

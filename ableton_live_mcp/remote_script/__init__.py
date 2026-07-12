@@ -300,6 +300,8 @@ class AbletonMCP(ControlSurface):
         "set_fold_state": lambda s, p: s._set_fold_state(s._req(p, "track_index"), p.get("folded", True)),
         "try_save_project": lambda s, p: s._try_save_project(),
         "set_device_routing": lambda s, p: s._set_device_routing(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "field"), s._req(p, "display_name")),
+        "preview_browser_item": lambda s, p: s._preview_browser_item(s._req(p, "item_uri")),
+        "stop_browser_preview": lambda s, p: s._stop_browser_preview(),
     }
 
     _READONLY_COMMANDS = {
@@ -327,6 +329,7 @@ class AbletonMCP(ControlSurface):
         "get_session_snapshot": lambda s, p: s._get_session_snapshot(),
         "get_group_info": lambda s, p: s._get_group_info(s._req(p, "track_index")),
         "get_device_routing": lambda s, p: s._get_device_routing(s._req(p, "track_index"), s._req(p, "device_index")),
+        "get_scale_info": lambda s, p: s._get_scale_info(),
     }
 
     # Commands whose main-thread work can exceed the default 10 s budget.
@@ -1911,6 +1914,33 @@ class AbletonMCP(ControlSurface):
             )
         setattr(dev, field, match)
         return {"device": dev.name, field: getattr(dev, field).display_name}
+
+    def _preview_browser_item(self, item_uri):
+        app = self.application()
+        browser = getattr(app, "browser", None)
+        if browser is None or not hasattr(browser, "preview_item"):
+            raise Exception("This Live version's browser does not support preview")
+        item = self._find_browser_item_by_uri(browser, item_uri)
+        if item is None:
+            raise Exception(f"No browser item for uri: {item_uri}")
+        browser.preview_item(item)
+        return {"previewing": item.name}
+
+    def _stop_browser_preview(self):
+        browser = getattr(self.application(), "browser", None)
+        if browser is not None and hasattr(browser, "stop_preview"):
+            browser.stop_preview()
+        return {"stopped": True}
+
+    def _get_scale_info(self):
+        song = self._song
+        return {
+            "scale_name": getattr(song, "scale_name", None),
+            "root_note": getattr(song, "root_note", None),
+            "scale_intervals": list(getattr(song, "scale_intervals", []) or []),
+            "scale_mode": bool(getattr(song, "scale_mode", False)),
+            "tuning_system": getattr(getattr(song, "tuning_system", None), "name", None),
+        }
 
     def _set_arrangement_overdub(self, enabled):
         self._song.arrangement_overdub = bool(enabled)
