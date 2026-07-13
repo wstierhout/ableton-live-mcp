@@ -8,6 +8,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![Glama tool quality](https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp/badges/score.svg)](https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp)
 
+**Website and installation guide: [abletonmcp.com](https://abletonmcp.com)**
+
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
 server that gives Claude, Cursor, Codex, or any MCP client 154 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
@@ -55,7 +57,8 @@ uvx mcp-server-ableton-live install
 ```
 
 Then restart Live and set Settings > Link/Tempo/MIDI > Control Surface to `AbletonMCP`
-(Input and Output: None). You only do this once. See Ableton's
+(Input and Output: None). Run the installer again after upgrading the package so
+the Live-side script stays version-matched. See Ableton's
 [guide to third-party Remote Scripts](https://help.ableton.com/hc/en-us/articles/209072009-Installing-third-party-remote-scripts)
 if the entry does not appear.
 

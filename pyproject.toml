@@ -1,7 +1,7 @@
 [project]
 name = "mcp-server-ableton-live"
-version = "1.7.2"
-description = "Control Ableton Live with AI using typed MCP tools for MIDI, mixing, mastering, and offline .als analysis"
+version = "1.7.3"
+description = "Control Ableton Live 11/12 with 154 typed MCP tools for MIDI, devices, arrangement, mixing, automation, and offline .als analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = [
@@ -40,6 +40,7 @@ dev = ["pytest>=8", "ruff>=0.8"]
 
 [project.scripts]
 ableton-live-mcp = "ableton_live_mcp.server:main"
+ableton-mcp = "ableton_live_mcp.server:main"
 mcp-server-ableton-live = "ableton_live_mcp.server:main"
 
 [build-system]
@@ -50,10 +51,12 @@ build-backend = "setuptools.build_meta"
 packages = ["ableton_live_mcp", "ableton_live_mcp.tools", "ableton_live_mcp.remote_script"]
 
 [project.urls]
-"Homepage" = "https://github.com/wstierhout/ableton-live-mcp"
-"Documentation" = "https://github.com/wstierhout/ableton-live-mcp#readme"
+"Homepage" = "https://abletonmcp.com"
+"Documentation" = "https://abletonmcp.com/docs/"
+"Source" = "https://github.com/wstierhout/ableton-live-mcp"
 "Changelog" = "https://github.com/wstierhout/ableton-live-mcp/blob/main/CHANGELOG.md"
 "Glama" = "https://glama.ai/mcp/servers/wstierhout/ableton-live-mcp"
+"MCP Registry" = "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.wstierhout%2Fableton-live-mcp"
 "Bug Tracker" = "https://github.com/wstierhout/ableton-live-mcp/issues"
 [tool.ruff]
 line-length = 100

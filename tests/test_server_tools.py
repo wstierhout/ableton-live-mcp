@@ -82,7 +82,7 @@ def test_version_consistency():
     assert server["version"] == __version__
     assert server["packages"][0]["version"] == __version__
     assert len(server["description"]) <= 100, "Official MCP Registry limit"
-    assert server["websiteUrl"] == "https://github.com/wstierhout/ableton-live-mcp#readme"
+    assert server["websiteUrl"] == "https://abletonmcp.com"
 
 
 def test_glama_reviewed_tools_have_documented_input_schemas():

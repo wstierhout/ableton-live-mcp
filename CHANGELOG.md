@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.3
+
+- Made [abletonmcp.com](https://abletonmcp.com) the project homepage and
+  documentation destination in PyPI and official MCP Registry metadata.
+- Added the website to the README and clarified that the bundled Remote Script
+  installer should be rerun after package upgrades.
+- Added `ableton-mcp` as a compatibility command alias for directory build
+  systems that infer the executable from the repository name.
+
 ## 1.7.2
 
 Audit pass across the whole server. 154 tools.
