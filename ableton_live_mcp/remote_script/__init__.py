@@ -211,7 +211,7 @@ class AbletonMCP(ControlSurface):
                     # Clean up finished client threads
                     self.client_threads = [t for t in self.client_threads if t.is_alive()]
 
-                except TimeoutError:
+                except socket.timeout:  # noqa: UP041 - Live 11 does not alias this to TimeoutError
                     # No connection yet, just continue
                     continue
                 except Exception as e:
