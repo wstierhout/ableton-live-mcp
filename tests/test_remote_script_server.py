@@ -38,11 +38,12 @@ def test_idle_socket_timeout_is_not_logged_as_an_accept_error():
                 self.owner.running = False
             raise LegacySocketTimeout("timed out")
 
+    sleep_calls = []
     namespace = {
         "socket": SimpleNamespace(timeout=LegacySocketTimeout),
         "TimeoutError": DifferentTimeoutError,
         "threading": __import__("threading"),
-        "time": SimpleNamespace(sleep=lambda _seconds: None),
+        "time": SimpleNamespace(sleep=sleep_calls.append),
     }
     method = _server_thread_method()
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(SCRIPT_PATH), "exec"), namespace)
@@ -60,3 +61,7 @@ def test_idle_socket_timeout_is_not_logged_as_an_accept_error():
     namespace["_server_thread"](bridge)
 
     assert bridge.log_messages == ["Server thread started", "Server thread stopped"]
+    # The loop must keep accepting after an idle timeout ...
+    assert bridge.server.accept_count == 2
+    # ... without falling into the error-path backoff sleep.
+    assert sleep_calls == []
