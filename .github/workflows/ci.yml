@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Lint
         run: uv run --extra dev ruff check .
       - name: Format check (all Python files)
@@ -25,7 +25,7 @@ jobs:
         python-version: ["3.10", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Tests
