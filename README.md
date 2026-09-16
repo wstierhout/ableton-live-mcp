@@ -30,7 +30,7 @@ You need Ableton Live 11 or 12, Python 3.10+, and [uv](https://docs.astral.sh/uv
 Codex (local desktop, CLI or IDE host):
 
 ```bash
-codex mcp add ableton -- uvx mcp-server-ableton-live@1.8.0
+codex mcp add ableton -- uvx mcp-server-ableton-live@1.8.1
 codex mcp list
 ```
 
@@ -39,7 +39,7 @@ For manual configuration and troubleshooting, see the [Codex guide](https://able
 Claude Code:
 
 ```bash
-claude mcp add AbletonMCP -s user -- uvx mcp-server-ableton-live@1.8.0
+claude mcp add AbletonMCP -s user -- uvx mcp-server-ableton-live@1.8.1
 ```
 
 Claude Desktop or Cursor, in the `mcpServers` block of the config file:
@@ -49,7 +49,7 @@ Claude Desktop or Cursor, in the `mcpServers` block of the config file:
   "mcpServers": {
     "AbletonMCP": {
       "command": "uvx",
-      "args": ["mcp-server-ableton-live@1.8.0"]
+      "args": ["mcp-server-ableton-live@1.8.1"]
     }
   }
 }
@@ -62,7 +62,7 @@ Claude Desktop or Cursor, in the `mcpServers` block of the config file:
 Library:
 
 ```bash
-uvx mcp-server-ableton-live@1.8.0 install
+uvx mcp-server-ableton-live@1.8.1 install
 ```
 
 Then activate the bridge in Live:
@@ -90,7 +90,7 @@ if the entry does not appear.
 **3. Check the setup.**
 
 ```bash
-uvx mcp-server-ableton-live@1.8.0 doctor --json
+uvx mcp-server-ableton-live@1.8.1 doctor --json
 ```
 
 Use the same `--user-library "/path/to/User Library"` for install and doctor if your

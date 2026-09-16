@@ -27,7 +27,7 @@ from _Framework.ControlSurface import ControlSurface
 DEFAULT_PORT = int(os.environ.get("ABLETON_MCP_PORT", "9877"))
 HOST = os.environ.get("ABLETON_MCP_HOST", "127.0.0.1")
 MAX_REQUEST_BYTES = 10 * 1024 * 1024  # backstop against a poisoned request buffer
-BRIDGE_VERSION = "1.8.0"
+BRIDGE_VERSION = "1.8.1"
 
 
 def _display_number(text):

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1 — 2026-09-16
+
+- Live 11: the Remote Script no longer logs `Server accept error: timed out` every
+  second while idle. Live 11 embeds Python 3.7, where `socket.timeout` is not yet an
+  alias of `TimeoutError`, so the listener's one-second accept timeout fell through
+  to the error handler and its backoff sleep. Reported and fixed by
+  [@felores](https://github.com/felores) in
+  [#3](https://github.com/wstierhout/ableton-live-mcp/pull/3). Rerun `install` and
+  restart Live to pick up the updated Remote Script. Live 12 was not affected.
+
 ## 1.8.0 — 2026-09-05
 
 - Dedicated Codex setup guide with a version-pinned local MCP connection.
