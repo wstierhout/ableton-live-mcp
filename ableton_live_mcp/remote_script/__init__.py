@@ -28,6 +28,87 @@ DEFAULT_PORT = int(os.environ.get("ABLETON_MCP_PORT", "9877"))
 HOST = os.environ.get("ABLETON_MCP_HOST", "127.0.0.1")
 MAX_REQUEST_BYTES = 10 * 1024 * 1024  # backstop against a poisoned request buffer
 BRIDGE_VERSION = "1.8.1"
+AUTOMATION_RAMP_STEP = 0.0625  # beats between generated ramp steps (1/16 beat)
+MAX_AUTOMATION_STEPS = 4096  # keeps one write well inside the 10 s main-thread budget
+
+
+def _finite_number(value, what):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be a number, got {value!r}")
+    if math.isnan(number) or math.isinf(number):
+        raise ValueError(f"{what} must be finite, got {value!r}")
+    return number
+
+
+def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
+                      hold_until=None, value_range=None):
+    """Expand write_automation points into (time, length, value) insert_step calls.
+
+    mode "points": one step per point, length = the point's "duration" (default
+    0.0, the original behaviour). mode "ramp": consecutive points are joined by
+    contiguous steps about step_length beats long, each holding the linear value
+    at its start, except that the last segment spreads its values so its final
+    step already holds the final value (Live 11 drops a 0-length hold at the clip
+    end, so the ramp would otherwise stop one step short). The last point holds
+    for its "duration", or until hold_until when it has none. Pure, so a bad
+    request fails before the envelope changes."""
+    if mode not in ("points", "ramp"):
+        raise ValueError(f"mode must be 'points' or 'ramp', got {mode!r}")
+    if not isinstance(points, (list, tuple)) or not points:
+        raise ValueError("points must be a non-empty list of {time, value} objects")
+    parsed = []
+    for i, pt in enumerate(points):
+        if not isinstance(pt, dict) or "time" not in pt or "value" not in pt:
+            raise ValueError(f"points[{i}] needs 'time' and 'value'")
+        t = _finite_number(pt["time"], f"points[{i}].time")
+        v = _finite_number(pt["value"], f"points[{i}].value")
+        d = pt.get("duration")
+        d = None if d is None else _finite_number(d, f"points[{i}].duration")
+        if t < 0:
+            raise ValueError(f"points[{i}].time must be >= 0 beats")
+        if d is not None and d < 0:
+            raise ValueError(f"points[{i}].duration must be >= 0 beats")
+        if value_range is not None and not value_range[0] <= v <= value_range[1]:
+            raise ValueError(f"points[{i}].value {v} is outside the parameter range {value_range[0]} to {value_range[1]}")
+        parsed.append((t, v, d))
+    if mode == "points":
+        return [(t, 0.0 if d is None else d, v) for t, v, d in parsed]
+
+    step_length = _finite_number(step_length, "step_length")
+    if step_length <= 0:
+        raise ValueError("step_length must be greater than 0 beats")
+    if len(parsed) < 2:
+        raise ValueError("ramp mode needs at least two points")
+    for i in range(1, len(parsed)):
+        if parsed[i][0] < parsed[i - 1][0]:
+            raise ValueError(f"ramp points must be in time order: points[{i}] is before points[{i - 1}]")
+        if parsed[i - 1][2] is not None:
+            raise ValueError("in ramp mode only the last point may have a duration; "
+                             "repeat a value at a later time to hold it")
+    segments = []
+    for (t0, v0, _), (t1, v1, _) in zip(parsed, parsed[1:]):
+        span = t1 - t0
+        if span > 0:  # same time twice = an instant jump to the next segment's value
+            segments.append([t0, v0, t1, v1, max(1, int(math.ceil(span / step_length - 1e-9)))])
+    if segments:
+        segments[-1][4] = max(2, segments[-1][4])  # room for both of its end values
+    total = sum(seg[4] for seg in segments) + 1
+    if total > MAX_AUTOMATION_STEPS:
+        raise ValueError(f"this ramp needs {total} steps (limit {MAX_AUTOMATION_STEPS}); use a larger step_length")
+    steps = []
+    for i, (t0, v0, t1, v1, n) in enumerate(segments):
+        divisor = n - 1 if i == len(segments) - 1 else n
+        for k in range(n):
+            start = t0 + (t1 - t0) * k / n
+            end = t1 if k == n - 1 else t0 + (t1 - t0) * (k + 1) / n
+            steps.append((start, end - start, v1 if k == divisor else v0 + (v1 - v0) * k / divisor))
+    t_last, v_last, d_last = parsed[-1]
+    if d_last is None:
+        d_last = max(0.0, hold_until - t_last) if hold_until is not None else 0.0
+    steps.append((t_last, d_last, v_last))
+    return steps
 
 
 def _display_number(text):
@@ -380,7 +461,7 @@ class AbletonMCP(ControlSurface):
         "set_return_device_parameter": lambda s, p: s._set_device_parameter(s._req(p, "return_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "value"), track_type="return"),
         "set_master_device_parameter": lambda s, p: s._set_device_parameter(0, s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "value"), track_type="master"),
         "set_device_enabled": lambda s, p: s._set_device_enabled(s._req(p, "track_index"), s._req(p, "device_index"), p.get("enabled", True)),
-        "write_automation": lambda s, p: s._write_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "points")),
+        "write_automation": lambda s, p: s._write_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "points"), p.get("mode", "points"), p.get("step_length", AUTOMATION_RAMP_STEP)),
         "clear_automation": lambda s, p: s._clear_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter")),
         "switch_to_arrangement_view": lambda s, p: s._switch_to_arrangement_view(),
         "set_current_song_time": lambda s, p: s._set_current_song_time(p.get("time", 0.0)),
@@ -1392,10 +1473,22 @@ class AbletonMCP(ControlSurface):
                 return p
         raise Exception("Parameter not found: " + str(parameter))
 
-    def _write_automation(self, track_index, clip_index, device_index, parameter, points):
+    def _write_automation(self, track_index, clip_index, device_index, parameter, points,
+                          mode="points", step_length=AUTOMATION_RAMP_STEP):
         clip = self._get_clip(track_index, clip_index)
         device = self._get_device(track_index, device_index)
         param = self._resolve_parameter(device, parameter)
+        ends = []
+        for attr in ("end_marker", "loop_end"):
+            try:
+                ends.append(float(getattr(clip, attr)))
+            except Exception:
+                pass
+        # Validate and expand every point before touching the envelope, so a bad
+        # request leaves the existing automation intact.
+        steps = _automation_steps(points, mode, step_length,
+                                  hold_until=max(ends) if ends else None,
+                                  value_range=(float(param.min), float(param.max)))
         # Live only creates a clip envelope for the currently-viewed detail clip.
         try:
             self._song.view.detail_clip = clip
@@ -1406,6 +1499,17 @@ class AbletonMCP(ControlSurface):
             clip.clear_envelope(param)
         except Exception:
             pass
+        # A new envelope starts from the parameter's current value, and Live 11
+        # keeps that value at the exact clip start, so a ramp from beat 0 jumps
+        # through it on every loop (an audible click). Setting the parameter to
+        # the ramp's first value first removes the jump. Points mode is left alone.
+        start_value_set = None
+        if mode == "ramp" and steps[0][0] == 0.0:
+            try:
+                param.value = steps[0][2]
+                start_value_set = float(param.value)
+            except Exception:
+                pass
         env = clip.automation_envelope(param)
         if env is None and hasattr(clip, "create_automation_envelope"):
             env = clip.create_automation_envelope(param)
@@ -1414,10 +1518,25 @@ class AbletonMCP(ControlSurface):
                 "Automation envelope unavailable for '{}' on '{}' (class={}). "
                 "This Live build may not support clip automation for this parameter.".format(
                     param.name, device.name, getattr(device, "class_name", "?")))
-        for pt in points:
-            env.insert_step(float(pt["time"]), 0.0, float(pt["value"]))
-        return {"parameter": param.name, "point_count": len(points),
-                "device": device.name}
+        # AutomationEnvelope.insert_step(time, length, value): a 0-length step is
+        # a momentary spike, so the length carries the hold or ramp segment.
+        for step_time, step_len, step_value in steps:
+            env.insert_step(step_time, step_len, step_value)
+        # Live picks up the new parameter value on its next update, so the envelope
+        # created above may still start from the old value. Report whether beat 0
+        # reads the ramp's first value; the MCP tool rewrites the ramp if not.
+        start_settled = None
+        if start_value_set is not None:
+            try:
+                tolerance = 1e-5 * max(1.0, abs(float(param.max) - float(param.min)))
+                start_settled = abs(float(env.value_at_time(0.0)) - steps[0][2]) <= tolerance
+            except Exception:
+                pass
+        return {"parameter": param.name, "device": device.name, "mode": mode,
+                "point_count": len(points), "step_count": len(steps),
+                "start_value_set": start_value_set, "start_settled": start_settled,
+                "start": min(st[0] for st in steps),
+                "end": max(st[0] + st[1] for st in steps)}
 
     def _clear_automation(self, track_index, clip_index, device_index, parameter):
         clip = self._get_clip(track_index, clip_index)
