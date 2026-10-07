@@ -30,8 +30,10 @@ MAX_REQUEST_BYTES = 10 * 1024 * 1024  # backstop against a poisoned request buff
 BRIDGE_VERSION = "1.8.1"
 
 
-def _display_number(text):
-    match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(Hz|kHz|ms|s|dB|%)\s*", str(text), re.I)
+def _display_number(text, allow_infinite=False):
+    # Some plugins display a Unicode minus or infinity sign; Live itself writes "-inf dB".
+    text = str(text).replace("\u2212", "-").replace("\u221e", "inf")
+    match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+|inf))\s*(Hz|kHz|ms|s|dB|%)\s*", text, re.I)
     if not match:
         raise ValueError("Use a native number, exact enum label, or Hz/kHz/ms/s/dB/% display text")
     value, unit = float(match.group(1)), match.group(2).lower()
@@ -39,7 +41,7 @@ def _display_number(text):
         value, unit = value * 1000, "hz"
     elif unit == "s":
         value, unit = value * 1000, "ms"
-    if not math.isfinite(value):
+    if not math.isfinite(value) and not allow_infinite:
         raise ValueError("Display value must be finite")
     return value, unit
 
@@ -49,6 +51,28 @@ def _parameter_value(param, requested):
     low, high = float(param.min), float(param.max)
     if not math.isfinite(low) or not math.isfinite(high) or low > high:
         raise ValueError("Invalid parameter range")
+    # MCP clients may deliver a number as text ("40", "-0.5"). Read it as a native
+    # number, unless it is exactly one of a quantized parameter's labels.
+    numeric = isinstance(requested, str) and re.fullmatch(
+        r"\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*", requested) is not None
+    if isinstance(requested, str) and param.is_quantized:
+        if high - low > 512:
+            if not numeric:
+                raise ValueError("Enum range too large; use a native numeric value")
+            requested = float(requested)
+        else:
+            matches = [v for v in range(math.ceil(low), math.floor(high) + 1)
+                       if param.str_for_value(v).strip().casefold() == requested.strip().casefold()]
+            if len(matches) == 1:
+                if numeric and float(requested) != matches[0]:
+                    return matches[0], (f"matched the label {requested.strip()!r} (native "
+                                        f"{matches[0]}); send a native index to choose by position")
+                return matches[0], None
+            if not numeric:
+                raise ValueError("Display label is missing or ambiguous; use a native value")
+            requested = float(requested)
+    elif numeric:
+        requested = float(requested)
     if not isinstance(requested, str):
         raw = float(requested)
         if not math.isfinite(raw):
@@ -57,19 +81,12 @@ def _parameter_value(param, requested):
         if param.is_quantized:
             clamped = max(low, min(high, math.floor(clamped + 0.5)))
         return clamped, "clamped or quantized to native range" if clamped != raw else None
-    if param.is_quantized:
-        if high - low > 512:
-            raise ValueError("Enum range too large; use a native numeric value")
-        matches = [v for v in range(math.ceil(low), math.floor(high) + 1)
-                   if param.str_for_value(v).strip().casefold() == requested.strip().casefold()]
-        if len(matches) != 1:
-            raise ValueError("Display label is missing or ambiguous; use a native value")
-        return matches[0], None
-    target, unit = _display_number(requested)
+    target, unit = _display_number(requested, allow_infinite=True)
     samples = []
     for i in range(9):
         raw = low + (high - low) * i / 8
-        display, found_unit = _display_number(param.str_for_value(raw))
+        # Gain-style parameters display "-inf dB" at their minimum.
+        display, found_unit = _display_number(param.str_for_value(raw), allow_infinite=True)
         if found_unit != unit:
             raise ValueError("Requested unit does not match this parameter")
         samples.append(display)
@@ -78,12 +95,18 @@ def _parameter_value(param, requested):
         (b < a if ascending else b > a) for a, b in zip(samples, samples[1:])
     ):
         raise ValueError("Display mapping is not monotonic; use a native numeric value")
+    if math.isinf(target):
+        if target == samples[0]:
+            return low, None
+        if target == samples[-1]:
+            return high, None
+        raise ValueError("Neither end of this parameter's range displays that value")
     if not min(samples) <= target <= max(samples):
         raise ValueError("Display value is outside the parameter range; no change made")
     candidates = []
     for _ in range(32):
         raw = (low + high) / 2
-        display, found_unit = _display_number(param.str_for_value(raw))
+        display, found_unit = _display_number(param.str_for_value(raw), allow_infinite=True)
         if found_unit != unit:
             raise ValueError("Display unit changes across the range; use a native value")
         candidates.append((abs(display - target), raw))

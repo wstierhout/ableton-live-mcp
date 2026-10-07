@@ -72,7 +72,9 @@ DeviceParameterValue = Annotated[
     Field(
         description=(
             "Native number (clamped/quantized), exact enum label, or display text with "
-            "Hz/kHz/ms/s/dB/% units, e.g. '250 Hz'. Unsupported mappings fail before writing."
+            "Hz/kHz/ms/s/dB/% units, e.g. '250 Hz', '-6 dB', or '-inf dB' for a gain's "
+            "minimum. A number sent as text ('0.5') counts as a native number unless it is "
+            "exactly one of the parameter's labels. Unsupported mappings fail before writing."
         )
     ),
 ]
