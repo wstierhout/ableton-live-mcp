@@ -457,6 +457,7 @@ class AbletonMCP(ControlSurface):
         "get_group_info": lambda s, p: s._get_group_info(s._req(p, "track_index")),
         "get_device_routing": lambda s, p: s._get_device_routing(s._req(p, "track_index"), s._req(p, "device_index")),
         "get_scale_info": lambda s, p: s._get_scale_info(),
+        "read_automation": lambda s, p: s._read_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), p.get("times"), p.get("start"), p.get("end"), p.get("step")),
     }
 
     # One merged lookup view; the two source dicts document intent.
@@ -1418,6 +1419,58 @@ class AbletonMCP(ControlSurface):
             env.insert_step(float(pt["time"]), 0.0, float(pt["value"]))
         return {"parameter": param.name, "point_count": len(points),
                 "device": device.name}
+
+    MAX_AUTOMATION_SAMPLES = 1024
+
+    def _read_automation(self, track_index, clip_index, device_index, parameter,
+                         times=None, start=None, end=None, step=None):
+        """Sample a clip envelope with AutomationEnvelope.value_at_time(). Pass
+        explicit beat times, or a start/end/step grid (defaults: clip start to
+        clip end, 1 beat apart). Live 11 returns the value just before a step at
+        that step's exact start time."""
+        clip = self._get_clip(track_index, clip_index)
+        device = self._get_device(track_index, device_index)
+        param = self._resolve_parameter(device, parameter)
+        if times is None:
+            ends = []
+            for attr in ("end_marker", "loop_end"):
+                try:
+                    ends.append(float(getattr(clip, attr)))
+                except Exception:
+                    pass
+            first = float(start) if start is not None else 0.0
+            last = float(end) if end is not None else (max(ends) if ends else first)
+            spacing = float(step) if step is not None else 1.0
+            if not spacing > 0 or not last >= first:
+                raise ValueError("Need step > 0 and end >= start")
+            count = int(math.floor((last - first) / spacing + 1e-9)) + 1
+            if count > self.MAX_AUTOMATION_SAMPLES:
+                raise ValueError(f"{count} samples requested (limit {self.MAX_AUTOMATION_SAMPLES}); "
+                                 "use a larger step or a shorter range")
+            times = [first + i * spacing for i in range(count)]
+        else:
+            times = [float(t) for t in times]
+            if len(times) > self.MAX_AUTOMATION_SAMPLES:
+                raise ValueError(f"At most {self.MAX_AUTOMATION_SAMPLES} times per call")
+        result = {"parameter": param.name, "device": device.name,
+                  "min": param.min, "max": param.max, "current_value": param.value}
+        env = clip.automation_envelope(param)
+        if env is None:
+            result.update(has_envelope=False, samples=[])
+            return result
+        if not hasattr(env, "value_at_time"):
+            raise Exception("AutomationEnvelope.value_at_time is not available in this Live version")
+        samples = []
+        for t in times:
+            value = env.value_at_time(t)
+            sample = {"time": t, "value": value}
+            try:
+                sample["display"] = param.str_for_value(value)
+            except Exception:
+                pass
+            samples.append(sample)
+        result.update(has_envelope=True, samples=samples)
+        return result
 
     def _clear_automation(self, track_index, clip_index, device_index, parameter):
         clip = self._get_clip(track_index, clip_index)

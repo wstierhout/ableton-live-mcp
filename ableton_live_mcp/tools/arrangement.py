@@ -1,9 +1,11 @@
 """Arrangement view, timeline placement, and clip automation."""
 
 import json
+from typing import Annotated
 
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from ..app import mcp
 from ..connection import get_ableton_connection
@@ -153,3 +155,56 @@ def clear_automation(
         },
     )
     return f"Cleared automation for {r.get('parameter')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def read_automation(
+    ctx: Context,
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    times: Annotated[
+        list[float] | None,
+        Field(
+            max_length=1024,
+            description="Explicit beat positions from the clip start to sample. Overrides start/end/step.",
+        ),
+    ] = None,
+    start: Annotated[
+        float | None, Field(ge=0, description="First beat of the sample grid; default 0.")
+    ] = None,
+    end: Annotated[
+        float | None, Field(ge=0, description="Last beat of the sample grid; default the clip end.")
+    ] = None,
+    step: Annotated[
+        float | None, Field(gt=0, description="Beats between grid samples; default 1.0.")
+    ] = None,
+) -> str:
+    """Read one device parameter's clip automation on a Session clip by sampling the
+    envelope at beat positions, to verify what write_automation produced.
+
+    Pass explicit times, or a start/end/step grid (default: every beat from the clip
+    start to the clip end; at most 1024 samples). Values are native parameter values
+    with a display string where Live provides one. has_envelope is false when the
+    clip has no automation for that parameter. Read-only.
+
+    At the exact time a step or breakpoint starts, Live returns the value just
+    before it, so a grid that lands on step boundaries reads one step behind (and
+    beat 0 reads the envelope's initial value). To check a step's value, sample a
+    little after its start, e.g. times=[0.01, 4.01, 8.01].
+    """
+    r = get_ableton_connection().send_command(
+        "read_automation",
+        {
+            "track_index": track_index,
+            "clip_index": clip_index,
+            "device_index": device_index,
+            "parameter": parameter,
+            "times": times,
+            "start": start,
+            "end": end,
+            "step": step,
+        },
+    )
+    return json.dumps(r, indent=2)

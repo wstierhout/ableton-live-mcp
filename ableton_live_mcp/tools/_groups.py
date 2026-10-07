@@ -29,7 +29,7 @@ GROUP_DESCRIPTIONS = {
     "clips": "create clips, write/edit MIDI notes (probability), quantize with strength, groove, loop, warp, pitch/gain",
     "devices": "browse/search and load devices onto any track incl Master and Returns, read/set any param, sidechain routing, rack macro variations, Simpler slicing, per-pad drum control, device knowledge base",
     "browser": "navigate the browser, load, and preview samples and presets",
-    "arrangement": "place/read/delete arrangement clips, write clip automation",
+    "arrangement": "place/read/delete arrangement clips, write and read clip automation",
     "generators": "drum patterns, euclidean rhythms, chord progressions, jazz voicings, voice-leading melodies, walking bass, genre progressions, humanize, motif transforms, minimalist processes, session setup",
     "audio": "record a section to a WAV without the export dialog",
     "analysis": "labelled mix heuristics, bounded local audio measurements, key/scale detection, session diff, and a toolset map",

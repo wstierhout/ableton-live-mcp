@@ -3,8 +3,8 @@
   "name": "ableton-live-mcp",
   "display_name": "Ableton Live",
   "version": "1.8.1",
-  "description": "Control Ableton Live 11/12 with 156 typed tools for MIDI, devices, arrangement, mixing, automation, and offline analysis.",
-  "long_description": "156 typed tools for controlling a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators, plus offline tools that read and diff saved .als files with Live closed. Install the bundled Remote Script with `ableton-live-mcp install` during setup and again after package upgrades.",
+  "description": "Control Ableton Live 11/12 with 157 typed tools for MIDI, devices, arrangement, mixing, automation, and offline analysis.",
+  "long_description": "157 typed tools for controlling a running Ableton Live set: session and transport, tracks and mixer, clips and MIDI, devices and automation, the browser, the arrangement, and built-in generators, plus offline tools that read and diff saved .als files with Live closed. Install the bundled Remote Script with `ableton-live-mcp install` during setup and again after package upgrades.",
   "author": {
     "name": "Wouter Stierhout",
     "url": "https://github.com/wstierhout"
