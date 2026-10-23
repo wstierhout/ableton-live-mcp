@@ -8,33 +8,39 @@ artifact hashes; results for an earlier candidate do not establish acceptance.
 
 The initial read-only review by Claude Opus 5.5 (`claude-opus-5-5`) covered
 candidate `39daa7e` and the Windows guide before checks ran. It identified one P1,
-five P2 findings and documentation gaps. Fixes and a focused re-audit are required;
-completion of that initial review is not a passing audit or validation result.
+five P2 findings and documentation gaps. Focused re-audits at `d74f16c` and
+`b19bef3` closed the findings and approved automated checks. A separate Opus
+review approved the manifest correction as schema metadata, without claiming a
+fresh Desktop installation. Final local pytest at `0710cb8`: 476 passed, no skips.
+Installed-wheel and platform CI evidence is recorded with the handoff artifacts.
 
-- [ ] Integrate #4 and #5 with the 2.0 validation, worker and receipt contracts.
-- [ ] Combine #6/#7 parameter conversion fixes; credit both contributions.
-- [ ] Confirm #8 Arrangement automation tools are excluded and remain deferred.
-- [ ] Resolve the initial Opus findings and complete the focused re-audit before
+- [x] Integrate #4 and #5 with the 2.0 validation, worker and receipt contracts.
+- [x] Combine #6/#7 parameter conversion fixes; credit both contributions.
+- [x] Confirm #8 Arrangement automation tools are excluded and remain deferred.
+- [x] Resolve the initial Opus findings and complete the focused re-audit before
       automated checks; retain the exact model identity, source revision, findings
       and fixes with the candidate evidence.
-- [ ] Review deferred automation timeouts/Undo, beat-zero parameter side effects,
+- [x] Review deferred automation timeouts/Undo, beat-zero parameter side effects,
       legacy bridge mutation protection, text-only error recovery details and
       quantized envelope validation against the audit findings.
-- [ ] Review the Windows verifier's Proactor setup and installed-byte assertions,
+- [x] Review the Windows verifier's Proactor setup and installed-byte assertions,
       the guide's archive identity, Unicode displays and cancellation evidence.
-- [ ] Review the migration notes and Windows instructions against the final tools.
+- [x] Review the migration notes and Windows instructions against the final tools.
 
 ## Automated validation (after audit fixes)
 
-- [ ] Run `uv sync --frozen --extra dev` in a clean candidate environment.
-- [ ] Run `uv run --frozen --extra dev ruff check .` and
+- [x] Run `uv sync --frozen --extra dev` in a clean candidate environment.
+- [x] Run `uv run --frozen --extra dev ruff check .` and
       `uv run --frozen --extra dev ruff format --check .`.
-- [ ] Run `uv run --frozen --extra dev pytest -q` and review any skips.
-- [ ] Confirm the Remote Script parses with Python 3.7 grammar (Live 11).
-- [ ] Run `uv run --frozen python scripts/export_tool_catalog.py --check` and
+- [x] Run `uv run --frozen --extra dev pytest -q` and review any skips.
+- [x] Confirm the Remote Script parses with Python 3.7 grammar (Live 11).
+- [x] Run `uv run --frozen python scripts/export_tool_catalog.py --check` and
       export the full 157-tool catalog. Check both prerelease version spellings:
       Python/bridge/PyPI pins `2.0.0rc1`; SemVer manifests `2.0.0-rc.1`.
-- [ ] Validate metadata against the official Desktop/Registry/plugin schemas.
+- [x] Validate Registry `2025-12-11` and Desktop MCPB `0.4` metadata against
+      their strict official schemas; plugin JSON and version pins pass limited checks.
+- [ ] Validate the Codex compatibility manifest with an applicable official
+      validator when available, and complete fresh client installation acceptance.
 - [ ] Build the sdist, native wheel and universal Python fallback wheel. Test
       installed distributions outside editable/source imports, including a real
       MCP stdio initialize/list/call flow and setup/doctor commands.

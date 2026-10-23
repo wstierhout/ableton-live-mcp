@@ -340,3 +340,9 @@ command removes only a byte-identical installed script and makes a recovery copy
 it refuses to remove an unrelated modified bridge. Do not use it to delete a
 bridge belonging to another version. Remove disposable projects only after
 keeping any failure reproductions and WAVs needed for diagnosis.
+
+If Live stalls after a beat-zero seed, the Undo group can remain open until Live
+runs its next callback. After an uncertain reply, inspect `get_operation_status`
+and wait for the receipt to finish before issuing Undo or any further edit.
+Record modal-stall/Undo behavior separately if reproduced on the disposable set;
+a normal successful Undo test does not establish this timing case.
