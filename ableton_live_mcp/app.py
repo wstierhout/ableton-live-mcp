@@ -10,6 +10,7 @@ import anyio.to_thread
 from mcp.server.fastmcp import FastMCP
 
 from .connection import disconnect_ableton, get_ableton_connection
+from .execution import WorkerMCP, finish_cleanup
 
 logger = logging.getLogger("AbletonMCPServer")
 
@@ -17,7 +18,7 @@ logger = logging.getLogger("AbletonMCPServer")
 async def _connect_on_startup() -> None:
     """Best-effort connection warm-up; every tool call lazily connects anyway."""
     try:
-        await anyio.to_thread.run_sync(get_ableton_connection)
+        await anyio.to_thread.run_sync(lambda: get_ableton_connection().diagnostics())
         logger.info("Successfully connected to Ableton on startup")
     except Exception as e:
         logger.warning(f"Could not connect to Ableton on startup: {str(e)}")
@@ -34,8 +35,15 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     try:
         yield {}
     finally:
-        warmup.cancel()
-        disconnect_ableton()
+
+        async def shutdown():
+            await server.drain_workers()
+            # A cancelled to_thread await cannot stop the underlying connector.
+            # Join it before disconnecting so it cannot reconnect after shutdown.
+            await asyncio.gather(warmup, return_exceptions=True)
+            await anyio.to_thread.run_sync(disconnect_ableton)
+
+        await finish_cleanup(shutdown())
         logger.info("AbletonMCP server shut down")
 
 
@@ -61,8 +69,8 @@ Conventions:
 - add_notes_to_clip REPLACES the clip's entire note content (use edit_notes for
   incremental changes). duplicate_to_arrangement OVERWRITES whatever overlaps the
   destination range. delete_track / delete_arrangement_clip shift later indices.
-- Transport tools report the PRE-command state (start_playback may answer
-  "playing: false"); confirm with get_session_info.
+- Start, stop and seek tools report requested and observed states after a later Live tick.
+  Only confirmed=true means the requested state was observed.
 - Use batch_commands for multi-step edits: one round-trip, one undo step.
 - If every command suddenly times out, a modal dialog is open in Live (e.g. the
   trial nag) - it freezes the Remote Script until dismissed. Ask the user to
@@ -70,4 +78,4 @@ Conventions:
 - undo/redo are available; prefer batch_commands so one undo reverts a whole edit.
 """
 
-mcp = FastMCP("Ableton Live MCP Server", lifespan=server_lifespan, instructions=INSTRUCTIONS)
+mcp = WorkerMCP("Ableton Live MCP Server", lifespan=server_lifespan, instructions=INSTRUCTIONS)

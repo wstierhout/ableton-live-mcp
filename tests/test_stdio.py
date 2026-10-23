@@ -29,5 +29,11 @@ def test_stdio_handshake_and_readonly_capability_call():
                 result = await session.call_tool("describe_capabilities", {})
                 assert not result.isError
                 assert "groups" in result.content[0].text
+                assert "groups" in result.structuredContent["data"]
+                failed = await session.call_tool(
+                    "analyze_audio_file", {"path": "/nonexistent/audio.wav"}
+                )
+                assert failed.isError
+                assert failed.structuredContent["error"]["type"] == "ValueError"
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=30))

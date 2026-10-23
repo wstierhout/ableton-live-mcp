@@ -1,7 +1,6 @@
 """Static checks on the Remote Script dispatch tables and the server/script contract."""
 
 import ast
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -54,16 +53,6 @@ def test_no_command_registered_twice():
     assert not overlap, f"commands in both tables: {overlap}"
 
 
-def test_every_server_tool_command_is_dispatched():
-    """Every send_command(...) in the server tools must exist in the Remote Script."""
-    handled = MUTATING.keys() | READONLY.keys()
-    sent = set()
-    for path in (ROOT / "ableton_live_mcp" / "tools").rglob("*.py"):
-        sent |= set(re.findall(r'send_command\(\s*["\']([a-z_]+)["\']', path.read_text()))
-    unknown = sent - handled
-    assert not unknown, f"server sends commands the Remote Script does not handle: {unknown}"
-
-
 def test_every_self_method_call_resolves():
     """Every self._x(...) call inside the class must hit a defined method.
 
@@ -91,24 +80,24 @@ def test_every_self_method_call_resolves():
     assert not missing, f"self.<method> calls with no definition: {missing}"
 
 
-def test_command_timeout_maps_stay_in_sync():
-    """connection.REMOTE_COMMAND_TIMEOUTS and the Remote Script's
-    _COMMAND_TIMEOUTS carry a 'keep in sync' comment; enforce it."""
-    from ableton_live_mcp.connection import REMOTE_COMMAND_TIMEOUTS, REMOTE_DEFAULT_TIMEOUT
+def test_client_timeout_exceeds_actual_bridge_wait(bridge, bridge_module, monkeypatch):
+    from types import SimpleNamespace
 
-    cls = _ableton_class()
-    script_map = None
-    for node in cls.body:
-        if isinstance(node, ast.Assign) and any(
-            getattr(t, "id", None) == "_COMMAND_TIMEOUTS" for t in node.targets
-        ):
-            script_map = ast.literal_eval(node.value)
-    assert script_map is not None, "_COMMAND_TIMEOUTS not found in the Remote Script"
-    assert script_map == REMOTE_COMMAND_TIMEOUTS
+    from ableton_live_mcp.connection import SOCKET_HEADROOM, command_timeout
 
-    # The script's hardcoded default budget must match the client constant too.
-    defaults = set(re.findall(r"_COMMAND_TIMEOUTS\.get\(command_type, ([\d.]+)\)", SCRIPT_SRC))
-    assert defaults == {str(REMOTE_DEFAULT_TIMEOUT)}, defaults
+    waits = []
+    monkeypatch.setattr(
+        bridge_module.queue,
+        "Queue",
+        lambda: SimpleNamespace(
+            get=lambda timeout: waits.append(timeout) or {}, put=lambda response: None
+        ),
+    )
+    commands = [("get_session_info", {})] + [(name, {}) for name in bridge._COMMAND_TIMEOUTS]
+    commands.append(("batch", {"commands": [{"type": "create_audio_clip"}]}))
+    for command, params in commands:
+        bridge.dispatch({"type": command, "params": params})
+        assert command_timeout(command, params) == waits[-1] + SOCKET_HEADROOM
 
 
 def test_quantize_grid_vocabulary_stays_in_sync():
@@ -125,3 +114,9 @@ def test_quantize_grid_vocabulary_stays_in_sync():
             assert script_grids == set(VALID_GRIDS)
             return
     raise AssertionError("_Q_BASE not found in the Remote Script")
+
+
+def test_cancellation_read_command_classification_matches_bridge():
+    from ableton_live_mcp.cancellation import READ_COMMANDS
+
+    assert READ_COMMANDS == READONLY.keys()

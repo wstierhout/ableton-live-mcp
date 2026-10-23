@@ -61,6 +61,16 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["ableton_live_mcp", "ableton_live_mcp.tools", "ableton_live_mcp.remote_script"]
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "setup.py" },
+    { file = "setup.cfg" },
+    { file = "MANIFEST.in" },
+    { file = "ableton_live_mcp/_audio_native.c" },
+    { env = "ABLETON_MCP_PURE_PYTHON" },
+]
+
 [project.urls]
 "Homepage" = "https://abletonmcp.com"
 "Documentation" = "https://abletonmcp.com/docs/"

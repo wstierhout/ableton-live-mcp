@@ -1,8 +1,3 @@
-import ast
-import uuid
-from pathlib import Path
-from types import SimpleNamespace
-
 from ableton_live_mcp.tools.analysis import _snapshot_delta
 
 
@@ -52,26 +47,18 @@ def test_legacy_or_reset_identities_are_not_guessed():
         assert "tracks_removed" not in result
 
 
-def test_bridge_ids_survive_rename_and_reorder_and_do_not_recycle():
-    tree = ast.parse(
-        (Path(__file__).parents[1] / "ableton_live_mcp/remote_script/__init__.py").read_text()
-    )
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "AbletonMCP")
-    method = next(
-        n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_snapshot_track_ids"
-    )
-    namespace = {"uuid": uuid}
-    exec(compile(ast.Module(body=[method], type_ignores=[]), "snapshot_ids", "exec"), namespace)
-    identify = namespace[method.name]
-    bridge = SimpleNamespace()
+def test_bridge_ids_survive_rename_and_reorder_and_do_not_recycle(bridge):
+    identify = bridge._snapshot_track_ids
 
     class Track:
         name = "Same"
 
     a, b, c = Track(), Track(), Track()
-    assert identify(bridge, [a, b]) == [1, 2]
+    first, second = identify([a, b])
+    assert first != second
     a.name = "Renamed"
-    assert identify(bridge, [b, a]) == [2, 1]
-    assert identify(bridge, [b, c]) == [2, 3]
-    assert len(bridge._snapshot_track_refs) == 2
-    assert identify(bridge, [b, a]) == [2, 4]
+    assert identify([b, a]) == [second, first]
+    retained, replacement = identify([b, c])
+    assert retained == second and replacement not in (first, second)
+    retained, returned = identify([b, a])
+    assert retained == second and returned not in (first, second, replacement)

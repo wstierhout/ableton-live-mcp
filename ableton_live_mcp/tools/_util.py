@@ -113,12 +113,11 @@ def params(**kw):
 
 
 def keyed_by_name(tracks):
-    """Key tracks by name, disambiguating duplicates as 'name #2', 'name #3', so a
-    diff does not silently collapse same-named tracks to the last one."""
+    """Match saved tracks by literal name and occurrence in track order."""
     seen = {}
     out = {}
     for t in tracks:
         name = t["name"]
         seen[name] = seen.get(name, 0) + 1
-        out[name if seen[name] == 1 else f"{name} #{seen[name]}"] = t
+        out[name, seen[name]] = t
     return out

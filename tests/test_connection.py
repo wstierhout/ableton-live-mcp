@@ -1,240 +1,266 @@
-"""Protocol-level tests against a fake Remote Script socket server."""
+"""Protocol behavior over loopback sockets and deterministic fragmented replies."""
 
 import json
 import socket
 import threading
+from types import SimpleNamespace
 
 import pytest
 
-from ableton_live_mcp.connection import AbletonConnection
+from ableton_live_mcp import connection as C
 
 
 class FakeAbleton:
-    """Minimal stand-in for the Remote Script's socket server."""
-
     def __init__(self, responder):
-        self.responder = responder
-        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.responder, self.error = responder, None
+        self.stopped = threading.Event()
+        self.server = socket.socket()
         self.server.bind(("127.0.0.1", 0))
         self.server.listen(1)
-        self.port = self.server.getsockname()[1]
+        self.server.settimeout(2)
+        self.connection = C.AbletonConnection("127.0.0.1", self.server.getsockname()[1])
         self.thread = threading.Thread(target=self._serve, daemon=True)
-        self.thread.start()
 
     def _serve(self):
-        conn, _ = self.server.accept()
-        buffer = b""
-        with conn:
-            while True:
-                data = conn.recv(8192)
-                if not data:
-                    break
-                buffer += data
-                try:
-                    request = json.loads(buffer.decode())
-                except json.JSONDecodeError:
-                    continue  # partial frame - keep reading
-                buffer = b""
-                reply = self.responder(request)
-                conn.sendall(json.dumps(reply).encode())
+        try:
+            peer, _ = self.server.accept()
+            buffer = b""
+            with peer:
+                while data := peer.recv(8192):
+                    buffer += data
+                    try:
+                        request = json.loads(buffer)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    buffer = b""
+                    reply = self.responder(request)
+                    if reply is None:
+                        self.stopped.wait(2)
+                        return
+                    if isinstance(reply, bytes):
+                        peer.sendall(reply)
+                        return  # deliberately truncated response
+                    peer.sendall(json.dumps(reply, ensure_ascii=False).encode())
+        except Exception as exc:
+            if not self.stopped.is_set():
+                self.error = exc
 
-    def close(self):
+    def __enter__(self):
+        self.thread.start()
+        return self.connection
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        self.connection.disconnect()
         self.server.close()
+        self.thread.join(2)
+        assert not self.thread.is_alive(), "Fixture socket thread leaked"
+        assert self.error is None, self.error
 
 
 def test_send_command_round_trip():
-    fake = FakeAbleton(
-        lambda req: {"status": "success", "result": {"echo": req["type"], "params": req["params"]}}
-    )
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
-        result = conn.send_command("get_session_info", {"x": 1})
-        assert result == {"echo": "get_session_info", "params": {"x": 1}}
-    finally:
-        conn.disconnect()
-        fake.close()
-
-
-def test_error_status_raises():
-    fake = FakeAbleton(lambda req: {"status": "error", "message": "boom"})
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
-        with pytest.raises(Exception, match="boom"):
-            conn.send_command("get_session_info")
-    finally:
-        conn.disconnect()
-        fake.close()
+    with FakeAbleton(lambda req: {"status": "success", "result": req["params"]}) as conn:
+        assert conn.send_command("get_track_info", {"track_index": 2}) == {"track_index": 2}
 
 
 def test_chunked_response_reassembly():
-    big = {"status": "success", "result": {"blob": "x" * 100_000}}
-
-    fake = FakeAbleton(lambda req: big)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
-        result = conn.send_command("get_session_info")
-        assert len(result["blob"]) == 100_000
-    finally:
-        conn.disconnect()
-        fake.close()
+    with FakeAbleton(lambda req: {"status": "success", "result": {"blob": "x" * 100_000}}) as conn:
+        assert conn.send_command("get_session_info")["blob"] == "x" * 100_000
 
 
-def test_long_running_command_gets_full_timeout(monkeypatch):
-    """command_timeout must reach the socket (regression: receive_full_response
-    used to clobber it with a hardcoded 15.0)."""
-    import ableton_live_mcp.connection as C
+def test_long_running_command_gets_full_timeout():
+    with FakeAbleton(lambda req: {"status": "success", "result": {}}) as conn:
+        receive = conn.receive_full_response
 
-    seen = {}
-    fake = FakeAbleton(lambda req: {"status": "success", "result": {}})
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    orig = conn.receive_full_response
+        def inspect_timeout():
+            assert conn.sock.gettimeout() == C.command_timeout("create_audio_clip") == 65.0
+            return receive()
 
-    def spy(buffer_size=8192):
-        seen["t"] = conn.sock.gettimeout()
-        return orig(buffer_size=buffer_size)
-
-    try:
-        conn.receive_full_response = spy
-        conn.send_command("create_audio_clip", {})
-        assert seen["t"] == C.command_timeout("create_audio_clip") == 65.0
-    finally:
-        conn.disconnect()
-        fake.close()
+        conn.receive_full_response = inspect_timeout
+        conn.send_command("create_audio_clip")
 
 
 def test_concurrent_calls_do_not_interleave():
-    """The io lock must serialize concurrent tool calls on the shared socket."""
-    import threading as th
+    with FakeAbleton(lambda req: {"status": "success", "result": req["params"]}) as conn:
+        results, errors = [], []
+        ready = threading.Barrier(4, timeout=2)
 
-    def slow_responder(req):
-        import time as t
+        def call(number):
+            try:
+                ready.wait()
+                results.append((number, conn.send_command("get_track_info", {"n": number})["n"]))
+            except Exception as exc:
+                errors.append(exc)
 
-        t.sleep(0.05)
-        return {"status": "success", "result": {"echo": req["params"]["n"]}}
-
-    fake = FakeAbleton(slow_responder)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    results, errors = [], []
-
-    def call(n):
-        try:
-            results.append((n, conn.send_command("get_session_info", {"n": n})["echo"]))
-        except Exception as e:
-            errors.append(str(e))
-
-    threads = [th.Thread(target=call, args=(i,)) for i in range(4)]
-    try:
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert not errors, errors
-        assert all(sent == echoed for sent, echoed in results)
-    finally:
-        conn.disconnect()
-        fake.close()
+        threads = [threading.Thread(target=call, args=(number,)) for number in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(2)
+        assert not any(thread.is_alive() for thread in threads)
+        assert not errors
+        assert sorted(results) == [(0, 0), (1, 1), (2, 2), (3, 3)]
 
 
 def test_timeout_reports_modal_dialog_hint(monkeypatch):
-    """A silent Live must surface the modal-dialog guidance (regression: the
-    receive loop used to swallow TimeoutError into a generic message) and the
-    dead socket must be closed, not leaked."""
-    import ableton_live_mcp.connection as C
-
-    def never_respond(req):
-        import time as t
-
-        t.sleep(10)
-        return {"status": "success", "result": {}}
-
     monkeypatch.setattr(C, "REMOTE_DEFAULT_TIMEOUT", 0.1)
     monkeypatch.setattr(C, "SOCKET_HEADROOM", 0.1)
-    fake = FakeAbleton(never_respond)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
+    with FakeAbleton(lambda req: None) as conn:
         with pytest.raises(C.AbletonTimeoutError, match="modal dialog"):
             conn.send_command("get_session_info")
-        assert conn.sock is None  # closed, ready for a clean reconnect
-    finally:
-        conn.disconnect()
-        fake.close()
+        assert conn.sock is None
 
 
 def test_app_level_error_keeps_connection_open():
-    """A status=error reply is an application error, not a transport failure:
-    the same socket must serve the next command without reconnecting."""
-    import ableton_live_mcp.connection as C
-
-    calls = {"n": 0}
-
-    def responder(req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {"status": "error", "message": "no such track"}
-        return {"status": "success", "result": {"ok": True}}
-
-    fake = FakeAbleton(responder)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
+    replies = iter(
+        [
+            {"status": "error", "message": "no such track"},
+            {"status": "success", "result": {"ok": True}},
+        ]
+    )
+    with FakeAbleton(lambda req: next(replies)) as conn:
         with pytest.raises(C.AbletonCommandError, match="no such track"):
             conn.send_command("get_track_info", {"track_index": 99})
-        sock_before = conn.sock
-        assert sock_before is not None
+        sock = conn.sock
         assert conn.send_command("get_session_info") == {"ok": True}
-        assert conn.sock is sock_before  # same socket, no reconnect
-    finally:
-        conn.disconnect()
-        fake.close()
+        assert conn.sock is sock
 
 
 def test_connection_closed_mid_response():
-    """The peer dying mid-frame must raise the connection-lost error and close
-    the local socket."""
-    import ableton_live_mcp.connection as C
-
-    class DyingAbleton(FakeAbleton):
-        def _serve(self):
-            conn, _ = self.server.accept()
-            conn.recv(8192)
-            conn.sendall(b'{"status": "succ')  # partial frame
-            conn.close()
-
-    fake = DyingAbleton(lambda req: None)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
+    with FakeAbleton(lambda req: b'{"status": "succ') as conn:
         with pytest.raises(C.AbletonConnectionLostError, match="Connection to Ableton lost"):
             conn.send_command("get_session_info")
         assert conn.sock is None
-    finally:
-        conn.disconnect()
-        fake.close()
 
 
 def test_multibyte_utf8_split_across_chunks():
-    """A multibyte character straddling two TCP sends must not abort the
-    receive loop (regression: UnicodeDecodeError used to kill the command)."""
+    payload = '{"status":"success","result":{"name":"Träck 🎹"}}'.encode()
+    cut = payload.index("🎹".encode()) + 2
+    chunks = iter((payload[:cut], payload[cut:]))
+    # Control recv boundaries; TCP may coalesce separate sends.
+    sock = SimpleNamespace(
+        settimeout=lambda _: None,
+        sendall=lambda _: None,
+        recv=lambda _: next(chunks, b""),
+        close=lambda: None,
+    )
+    result = C.AbletonConnection("unused", 1, sock).send_command("get_track_info")
+    assert result == {"name": "Träck 🎹"}
 
-    class SplitAbleton(FakeAbleton):
-        def _serve(self):
-            import time as t
 
-            conn, _ = self.server.accept()
-            conn.recv(8192)
-            payload = json.dumps(
-                {"status": "success", "result": {"name": "Träck \U0001f3b9"}}
-            ).encode("utf-8")
-            # Split inside the last multibyte character.
-            cut = len(payload) - 3
-            conn.sendall(payload[:cut])
-            t.sleep(0.05)
-            conn.sendall(payload[cut:])
+def test_trickled_response_has_one_overall_deadline(monkeypatch):
+    clock, closed = [0.0], []
+    monkeypatch.setattr(C.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(C, "REMOTE_DEFAULT_TIMEOUT", 0.2)
+    monkeypatch.setattr(C, "SOCKET_HEADROOM", 0.0)
 
-    fake = SplitAbleton(lambda req: None)
-    conn = AbletonConnection(host="127.0.0.1", port=fake.port)
-    try:
-        result = conn.send_command("get_track_info")
-        assert result["name"] == "Träck \U0001f3b9"
-    finally:
-        conn.disconnect()
-        fake.close()
+    def advance(seconds, reply=None):
+        clock[0] += seconds
+        return reply
+
+    sock = SimpleNamespace(
+        settimeout=lambda _: None,
+        sendall=lambda _: advance(0.05),
+        recv=lambda _: advance(0.08, b" "),
+        close=lambda: closed.append(True),
+    )
+    with pytest.raises(C.AbletonTimeoutError) as error:
+        C.AbletonConnection("unused", 1, sock).send_command("create_midi_track")
+    assert closed and 0.2 <= clock[0] < 0.3
+    assert error.value.details["may_have_applied"] is True
+    assert error.value.details["operation_id"]
+
+
+def test_structured_bridge_error_survives_connection():
+    def reply(request):
+        return {
+            "status": "error",
+            "message": "batch failed",
+            "operation_id": request["operation_id"],
+            "details": {"completed_count": 1, "failed_step": 2},
+        }
+
+    with FakeAbleton(reply) as conn:
+        with pytest.raises(C.AbletonCommandError) as error:
+            conn.send_command("batch", {"commands": []}, operation_id="known-id")
+        assert error.value.details == {
+            "completed_count": 1,
+            "failed_step": 2,
+            "operation_id": "known-id",
+        }
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        [],
+        {"status": "unexpected", "result": {}},
+        {"result": {}},
+        {"status": "success"},
+        {"status": "success", "result": None},
+        {"status": "error", "message": None},
+        {"status": "error", "message": "failed", "details": []},
+        {"status": "success", "result": {}, "operation_id": "another-edit"},
+    ],
+)
+def test_malformed_response_retains_uncertain_edit_and_never_retries(response):
+    requests = []
+
+    def reply(request):
+        requests.append(request)
+        return response
+
+    with FakeAbleton(reply) as conn:
+        with pytest.raises(C.AbletonProtocolError) as error:
+            conn.send_command("create_midi_track", operation_id="original-edit")
+        assert error.value.details == {
+            "operation_id": "original-edit",
+            "state": "unknown",
+            "may_have_applied": True,
+        }
+        assert len(requests) == 1
+        assert conn.sock is None
+
+
+def test_disconnect_waits_for_inflight_capability_probe():
+    answering, release, disconnecting, disconnected = (threading.Event() for _ in range(4))
+    results = []
+
+    def reply(request):
+        answering.set()
+        assert release.wait(2)
+        return {"status": "success", "result": {"capabilities": ["batch_preflight"]}}
+
+    with FakeAbleton(reply) as conn:
+
+        def disconnect():
+            disconnecting.set()
+            conn.disconnect()
+            disconnected.set()
+
+        probe = threading.Thread(
+            target=lambda: results.append(conn.supports_capability("batch_preflight"))
+        )
+        closer = threading.Thread(target=disconnect)
+        try:
+            probe.start()
+            assert answering.wait(2)
+            closer.start()
+            assert disconnecting.wait(2)
+            assert not disconnected.wait(0.02)
+        finally:
+            release.set()
+            probe.join(2)
+            if closer.ident is not None:
+                closer.join(2)
+        assert results == [True] and disconnected.is_set()
+        assert conn.sock is None
+
+
+def test_capabilities_do_not_share_mutable_session_response():
+    with FakeAbleton(
+        lambda req: {"status": "success", "result": {"capabilities": ["batch_preflight"]}}
+    ) as conn:
+        result = conn.send_command("get_session_info")
+        result["capabilities"].clear()
+        assert conn.supports_capability("batch_preflight")

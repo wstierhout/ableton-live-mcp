@@ -7,6 +7,7 @@ import os
 import platform
 import socket
 import tempfile
+import time
 from importlib import resources
 from pathlib import Path
 
@@ -101,9 +102,14 @@ def uninstall(user_library=None):
 def _probe():
     with socket.create_connection((ABLETON_HOST, ABLETON_PORT), timeout=3) as connection:
         connection.settimeout(15)
+        deadline = time.monotonic() + 15
         connection.sendall(b'{"type":"get_session_info","params":{}}')
         data = bytearray()
         while len(data) < 1024 * 1024:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Bridge diagnostic deadline exceeded")
+            connection.settimeout(remaining)
             chunk = connection.recv(8192)
             if not chunk:
                 break
@@ -142,7 +148,12 @@ def doctor(user_library=None, json_output=False):
             reachable=True,
             live_version=live.get("live_version"),
             running_script_version=live.get("bridge_version"),
-            running_script_matches=live.get("bridge_version") == __version__,
+            running_script_matches=(
+                live.get("bridge_version") == __version__ and live.get("bridge_protocol", 1) >= 2
+            ),
+            bridge_protocol=live.get("bridge_protocol", 1),
+            capabilities=live.get("capabilities", []),
+            bridge_update_required=live.get("bridge_protocol", 1) < 2,
         )
     except (OSError, ValueError) as exc:
         report["error"] = str(exc)

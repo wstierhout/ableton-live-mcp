@@ -33,6 +33,8 @@ def test_c_major_scale_detects_c_major():
     assert result["key"] == "C major"
     assert result["tonic"] == "C"
     assert result["mode"] == "major"
+    assert -1.0 <= result["confidence"] <= 1.0
+    assert result["margin"] >= 0.0
 
 
 def test_a_natural_minor_scale_detects_a_minor():
@@ -65,17 +67,21 @@ def test_empty_notes_returns_no_key_without_crashing():
     assert "message" in result
 
 
-def test_confidence_in_range_and_margin_nonnegative():
-    result = detect_key(_scale_notes(60, MAJOR_SCALE))
-    assert -1.0 <= result["confidence"] <= 1.0
-    assert result["margin"] >= 0.0
-
-
-def test_all_weightings_agree_on_a_clean_scale():
-    # A flat, evenly-weighted scale should land on the same tonic regardless of
-    # the weighting knob.
-    for weight in ("duration", "velocity", "product", "count"):
-        assert detect_key(_scale_notes(65, MAJOR_SCALE), weight=weight)["key"] == "F major"
+def test_weightings_match_equivalent_note_counts():
+    # Long/quiet C-major notes compete with short/loud D-minor notes.
+    notes = [{"pitch": p, "duration": 8, "velocity": 2} for p in (60, 64, 67)] + [
+        {"pitch": p, "duration": 1, "velocity": 16} for p in (62, 65, 69)
+    ]
+    equivalents = {
+        "duration": [60, 64, 67] * 8 + [62, 65, 69],
+        "velocity": [60, 64, 67] + [62, 65, 69] * 8,
+        "product": [60, 64, 67, 62, 65, 69],  # every duration*velocity is 16
+    }
+    for weight, pitches in equivalents.items():
+        expected = detect_key([{"pitch": p} for p in pitches], weight="count")
+        actual = detect_key(notes, weight=weight)
+        assert (actual["key"], actual["confidence"]) == (expected["key"], expected["confidence"])
+    assert detect_key(notes, "duration")["key"] != detect_key(notes, "velocity")["key"]
 
 
 def test_invalid_weight_raises():

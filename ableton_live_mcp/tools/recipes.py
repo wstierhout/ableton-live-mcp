@@ -6,9 +6,6 @@ generated parts. Recipes only orchestrate existing tools and the pure generators
 so they add no new Live-API surface.
 """
 
-import json
-
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -27,7 +24,7 @@ def _try_load(conn, track_index, query):
     """Best-effort: search the browser and load the first fitting item. Search/
     load failures are swallowed so the recipe still completes (the track is just
     silent until an instrument is added) - but a dead connection is not, since
-    every later step would fail anyway. Returns the loaded item's name or None."""
+    every later step would fail anyway. Returns the instrument name plus search coverage or an actionable warning."""
     try:
         result = conn.send_command("search_browser", {"query": query, "max_results": 5})
         matches = result.get("matches") if isinstance(result, dict) else None
@@ -39,10 +36,22 @@ def _try_load(conn, track_index, query):
             conn.send_command(
                 "load_browser_item", {"track_index": track_index, "item_uri": pick["uri"]}
             )
-            return pick.get("name")
+            return {
+                "instrument": pick.get("name"),
+                "search_partial": bool(result.get("partial")),
+                "search_limit_reasons": result.get("limit_reasons", []),
+            }
+        if isinstance(result, dict) and result.get("partial"):
+            return {
+                "instrument": None,
+                "search_partial": True,
+                "search_limit_reasons": result.get("limit_reasons", []),
+                "warning": "Browser search incomplete; no instrument selected. Narrow the category/query.",
+            }
     except AbletonCommandError as e:
         logger.debug(f"Recipe instrument load skipped ({query!r}): {e}")
-    return None
+        return {"instrument": None, "warning": str(e)}
+    return {"instrument": None, "search_partial": False}
 
 
 def _build(
@@ -50,26 +59,30 @@ def _build(
 ):
     if bars < 1:
         raise ValueError("bars must be at least 1")
-    conn.send_command("set_tempo", {"tempo": tempo})
     chords = ga.progression_for_genre(genre, key, scale, bars)
+    # Validate/generate every part before editing the set.
+    drum_notes = ga.drum_groove(bars=min(bars, 2), style=drum_style)
+    bass_notes = ga.walking_bass(chords, key=key, scale=scale)
+    chord_notes = ga.voice_progression(chords, style=chord_style)
+    conn.send_command("set_tempo", {"tempo": tempo})
     length = bars * 4.0
     drum_bars = min(bars, 2)
     result = {"genre": genre, "tempo": tempo, "key": key, "progression": chords, "tracks": []}
 
     drums = _new_track(conn, "Drums")
     kit = _try_load(conn, drums, "drum")
-    _write_clip(drums, 0, drum_bars * 4.0, ga.drum_groove(bars=drum_bars, style=drum_style))
-    result["tracks"].append({"name": "Drums", "index": drums, "instrument": kit})
+    _write_clip(drums, 0, drum_bars * 4.0, drum_notes)
+    result["tracks"].append({"name": "Drums", "index": drums, **kit})
 
     bass = _new_track(conn, "Bass")
     binst = _try_load(conn, bass, bass_query)
-    _write_clip(bass, 0, length, ga.walking_bass(chords, key=key, scale=scale))
-    result["tracks"].append({"name": "Bass", "index": bass, "instrument": binst})
+    _write_clip(bass, 0, length, bass_notes)
+    result["tracks"].append({"name": "Bass", "index": bass, **binst})
 
     chord_track = _new_track(conn, "Chords")
     cinst = _try_load(conn, chord_track, chord_query)
-    _write_clip(chord_track, 0, length, ga.voice_progression(chords, style=chord_style))
-    result["tracks"].append({"name": "Chords", "index": chord_track, "instrument": cinst})
+    _write_clip(chord_track, 0, length, chord_notes)
+    result["tracks"].append({"name": "Chords", "index": chord_track, **cinst})
     return result
 
 
@@ -100,27 +113,22 @@ RECIPES = {
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def list_recipes(ctx: Context) -> str:
+def list_recipes() -> dict:
     """List the built-in composition recipes (name, description, and default
     tempo/key/scale/bars), for use with apply_recipe."""
-    return json.dumps(
-        {
-            n: {"description": r["description"], "defaults": r["defaults"]}
-            for n, r in RECIPES.items()
-        },
-        indent=2,
-    )
+    return {
+        n: {"description": r["description"], "defaults": r["defaults"]} for n, r in RECIPES.items()
+    }
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def apply_recipe(
-    ctx: Context,
     name: str,
     tempo: float | None = None,
     key: str | None = None,
     scale: str | None = None,
     bars: int | None = None,
-) -> str:
+) -> dict:
     """Scaffold a genre starter in one call: set the tempo, add Drums, Bass, and
     Chords MIDI tracks, try to load fitting instruments, and write generated
     parts. `name` is one from list_recipes (e.g. "lofi_beat", "house_groove").
@@ -138,4 +146,4 @@ def apply_recipe(
         bars if bars is not None else d["bars"],
         **recipe["args"],
     )
-    return json.dumps(result, indent=2)
+    return result

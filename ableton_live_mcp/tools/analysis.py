@@ -5,21 +5,21 @@
 first call. Both are pure logic over data the other tools already return.
 """
 
-import json
+import threading
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
+from ..audio_stats import NATIVE_AUDIO
 from ..connection import get_ableton_connection
-from ._groups import GROUP_DESCRIPTIONS
+from ._groups import ENABLED_GROUPS, GROUP_DESCRIPTIONS
 
 _CONVENTIONS = [
     "Indices are 0-based; times and lengths are in beats.",
     "Volume is Live's 0.0 to 1.0 fader range where 0.85 is 0 dB.",
     "add_notes_to_clip replaces a clip's notes; use edit_notes for incremental changes.",
     "Device parameters use each parameter's own range; read get_device_parameters first.",
-    "Transport replies report the pre-command state; confirm with get_session_info.",
+    "Start/stop/seek replies include requested and observed state; check confirmed before continuing.",
 ]
 
 
@@ -82,7 +82,7 @@ def mix_findings(snapshot):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def analyze_mix(ctx: Context) -> str:
+def analyze_mix() -> dict:
     """Heuristic session-state checks, NOT audio, peak, LUFS or headroom measurements.
     Scan the current live set for inspection leads: several high faders, a muted
     or empty Session track, or a MIDI track without devices. External routing and
@@ -90,19 +90,17 @@ def analyze_mix(ctx: Context) -> str:
     findings so you can decide what to fix. Reads the session; changes nothing."""
     snapshot = get_ableton_connection().send_command("get_session_snapshot")
     findings = mix_findings(snapshot)
-    return json.dumps(
-        {
-            "evidence": "heuristic",
-            "limitations": "Session/fader state only. Does not measure audio, clipping, LUFS or true peak.",
-            "track_count": snapshot.get("track_count"),
-            "issue_count": len(findings),
-            "issues": findings,
-        },
-        indent=2,
-    )
+    return {
+        "evidence": "heuristic",
+        "limitations": "Session/fader state only. Does not measure audio, clipping, LUFS or true peak.",
+        "track_count": snapshot.get("track_count"),
+        "issue_count": len(findings),
+        "issues": findings,
+    }
 
 
 _LAST_SNAPSHOT = {"data": None}
+_SNAPSHOT_LOCK = threading.Lock()
 
 
 def _snapshot_delta(prev, cur):
@@ -151,24 +149,30 @@ def _snapshot_delta(prev, cur):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def session_diff(ctx: Context) -> str:
+def session_diff() -> dict:
     """Report what changed in the set since the LAST time you called this tool:
     tempo/time-signature/play-state, tracks added, removed, renamed or reordered, and per-track volume,
     mute, solo, arm, clip-count, and device changes. The first call records a
     baseline (no diff). Track IDs are scoped to the running bridge; older bridges
     cannot identify renames reliably. Call it before and after an edit to verify it took effect."""
-    cur = get_ableton_connection().send_command("get_session_snapshot")
-    prev = _LAST_SNAPSHOT["data"]
-    _LAST_SNAPSHOT["data"] = cur
+    with _SNAPSHOT_LOCK:
+        cur = get_ableton_connection().send_command("get_session_snapshot")
+        prev = _LAST_SNAPSHOT["data"]
+        _LAST_SNAPSHOT["data"] = cur
     if prev is None or prev.get("snapshot_scope") != cur.get("snapshot_scope"):
-        return json.dumps({"baseline": True, "track_count": cur.get("track_count")}, indent=2)
-    return json.dumps({"changes": _snapshot_delta(prev, cur)}, indent=2)
+        return {"baseline": True, "track_count": cur.get("track_count")}
+    return {"changes": _snapshot_delta(prev, cur)}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def describe_capabilities(ctx: Context) -> str:
-    """A high-level map of this server: the tool groups and what each covers, plus
-    the conventions to follow, so you can orient before your first call. Set
+def describe_capabilities() -> dict:
+    """A map of all available groups, the enabled groups, and conventions to
+    follow, so you can orient before your first call. Set
     ABLETON_TOOLSETS to load only some groups. For the current live state, call
     get_session_snapshot; for mix problems, analyze_mix."""
-    return json.dumps({"groups": GROUP_DESCRIPTIONS, "conventions": _CONVENTIONS}, indent=2)
+    return {
+        "groups": GROUP_DESCRIPTIONS,
+        "enabled_groups": [group for group in ENABLED_GROUPS if group in GROUP_DESCRIPTIONS],
+        "conventions": _CONVENTIONS,
+        "audio_acceleration": "native" if NATIVE_AUDIO else "python",
+    }

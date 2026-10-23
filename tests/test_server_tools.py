@@ -1,121 +1,85 @@
-"""The FastMCP app registers the full tool surface with unique names."""
+"""Core public tool contracts; release metadata is checked by the catalog exporter."""
 
 import asyncio
+import json
+import os
+import subprocess
+import sys
 
-GLAMA_REVIEWED_TOOLS = {
-    "clear_automation",
-    "create_audio_track",
-    "create_locator",
-    "delete_clip",
-    "duplicate_scene",
-    "duplicate_track",
-    "fire_clip",
-    "fire_scene",
-    "generate_chord_progression",
-    "get_clip_notes",
-    "get_session_info",
-    "get_track_info",
-    "load_device_to_return",
-    "load_drum_kit",
-    "set_clip_color",
-    "set_clip_loop",
-    "set_clip_name",
-    "set_crossfade_assign",
-    "set_device_enabled",
-    "set_loop",
-    "set_master_device_parameter",
-    "set_record_mode",
-    "set_return_device_parameter",
-    "set_scene_name",
-    "set_time_signature",
-    "set_track_mute",
-    "set_track_pan",
-    "set_track_solo",
-    "undo",
-}
+import pytest
 
 
-def test_tool_registration():
-    from ableton_live_mcp import tools as _tools  # noqa: F401  (registers the tools)
-    from ableton_live_mcp.app import mcp
-
-    tools = asyncio.run(mcp.list_tools())
-    names = [t.name for t in tools]
-    assert len(names) == len(set(names)), "duplicate tool names"
-    assert len(names) == 156, f"expected 156 tools, README/manifest say 156, got {len(names)}"
-    for expected in (
-        "get_session_info",
-        "set_track_volume",
-        "write_automation",
-        "quantize_clip",
-        "load_device_to_master",
-        "als_diff",
-        "generate_walking_bass",
-        "tap_tempo",
-        "get_session_snapshot",
-        "apply_recipe",
-        "detect_session_key",
-        "record_section",
-        "adg_analyze",
-        "als_details",
-        "preview_browser_item",
-    ):
-        assert expected in names
-
-
-def test_version_consistency():
-    """The hand-maintained version strings must agree everywhere."""
-    import json
-    import pathlib
-    import re
-
-    root = pathlib.Path(__file__).parent.parent
-    from ableton_live_mcp import __version__
-
-    pyproject = (root / "pyproject.toml").read_text()
-    assert re.search(rf'^version = "{re.escape(__version__)}"$', pyproject, re.M), (
-        f"pyproject.toml version != {__version__}"
-    )
-    manifest = json.loads((root / "manifest.json").read_text())
-    assert manifest["version"] == __version__
-    server = json.loads((root / "server.json").read_text())
-    assert server["version"] == __version__
-    assert server["packages"][0]["version"] == __version__
-    assert len(server["description"]) <= 100, "Official MCP Registry limit"
-    assert server["websiteUrl"] == "https://abletonmcp.com"
-    # The unpublished plugin is a separate local development artifact.
-    plugin_path = root / "plugins/ableton-live/.codex-plugin/plugin.json"
-    if plugin_path.is_file():
-        plugin = json.loads(plugin_path.read_text())
-        assert plugin["version"] == __version__
-        config = json.loads((root / "plugins/ableton-live/.mcp.json").read_text())
-        assert config["mcpServers"]["ableton"]["args"] == [f"mcp-server-ableton-live@{__version__}"]
-    script = (root / "ableton_live_mcp/remote_script/__init__.py").read_text()
-    assert f'BRIDGE_VERSION = "{__version__}"' in script
-
-
-def test_glama_reviewed_tools_have_documented_input_schemas():
-    """Keep the parameter-description gap fixed for every tool Glama rated B/C."""
+def test_core_tools_publish_callable_parameter_schemas():
     from ableton_live_mcp import tools as _tools  # noqa: F401
     from ableton_live_mcp.app import mcp
 
-    by_name = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
-    assert GLAMA_REVIEWED_TOOLS <= by_name.keys()
-
-    missing = []
-    for name in sorted(GLAMA_REVIEWED_TOOLS):
-        for parameter, schema in by_name[name].inputSchema.get("properties", {}).items():
-            if not schema.get("description"):
-                missing.append(f"{name}.{parameter}")
-    assert not missing, f"missing input-schema descriptions: {', '.join(missing)}"
-
-
-def test_glama_metadata_claims_repository_owner():
-    import json
-    import pathlib
-
-    metadata = json.loads((pathlib.Path(__file__).parent.parent / "glama.json").read_text())
-    assert metadata == {
-        "$schema": "https://glama.ai/mcp/schemas/server.json",
-        "maintainers": ["wstierhout"],
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    contracts = {
+        "set_track_volume": {"track_index": "integer", "volume": "number"},
+        "add_notes_to_clip": {"track_index": "integer", "clip_index": "integer", "notes": "array"},
+        "record_section": {"start_beat": "number", "end_beat": "number"},
+        "batch_commands": {"commands": "array"},
     }
+    for name, fields in contracts.items():
+        schema = tools[name].inputSchema
+        assert set(fields) <= set(schema["required"])
+        assert "ctx" not in schema["properties"]
+        for field, kind in fields.items():
+            assert schema["properties"][field]["type"] == kind
+
+
+@pytest.mark.parametrize("selection", ["recipes", "recipes,analysis"])
+def test_selected_groups_exclude_dependency_tools_but_keep_helpers(selection):
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import asyncio, json
+from ableton_live_mcp.app import mcp
+from ableton_live_mcp.tools import recipes
+async def inspect():
+    tools = [tool.name for tool in await mcp.list_tools()]
+    recipe_list = await mcp.call_tool("list_recipes", {})
+    capabilities = (await mcp.call_tool("describe_capabilities", {})).structuredContent \
+        if "describe_capabilities" in tools else None
+    print(json.dumps({"tools": tools, "recipes": recipe_list.structuredContent,
+                      "notes": recipes.ga.drum_groove(bars=1), "capabilities": capabilities}))
+asyncio.run(inspect())
+""",
+        ],
+        env={**os.environ, "ABLETON_TOOLSETS": selection},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(process.stdout)
+    expected = {"list_recipes", "apply_recipe"}
+    if "analysis" in selection:
+        expected |= {
+            "analyze_mix",
+            "session_diff",
+            "describe_capabilities",
+            "detect_clip_key",
+            "detect_session_key",
+            "detect_track_key",
+            "als_detect_key",
+            "analyze_audio_file",
+        }
+    assert set(result["tools"]) == expected
+    if "analysis" in selection:
+        assert result["capabilities"]["data"]["enabled_groups"] == ["recipes", "analysis"]
+        assert "generators" in result["capabilities"]["data"]["groups"]
+    assert "lofi_beat" in result["recipes"]["data"]
+    assert result["notes"]
+
+
+def test_unknown_tool_selection_fails_at_startup():
+    process = subprocess.run(
+        [sys.executable, "-c", "import ableton_live_mcp.tools"],
+        env={**os.environ, "ABLETON_TOOLSETS": "recipez"},
+        capture_output=True,
+        text=True,
+    )
+    assert process.returncode != 0
+    assert "Unknown ABLETON_TOOLSETS: ['recipez']" in process.stderr

@@ -22,7 +22,8 @@ Notes use the project's standard dict shape, identical to ``generators.py``:
 to 1-127, and start times kept non-negative.
 """
 
-from mcp.server.fastmcp import Context
+import math
+
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -124,6 +125,12 @@ def phase_pattern(notes, repeats, shift):
     list of ``repeats * len(notes)`` notes; the input is not mutated.
     """
     reps = max(0, int(repeats))
+    if not notes:
+        return []
+    if len(notes) * reps > 32000:
+        raise ValueError("Phasing would exceed the 32000-note output limit")
+    if not math.isfinite(float(shift)):
+        raise ValueError("shift must be finite")
     out = []
     for k in range(reps):
         offset = k * float(shift)
@@ -154,8 +161,10 @@ def additive(notes, steps):
         return []
     # Clip notes arrive in whatever order Live returns them; "first i notes"
     # only makes musical sense in time order.
-    notes = sorted(notes, key=lambda n: n["start_time"])
     m = min(len(notes), max(1, int(steps)))
+    if m * (m + 1) // 2 > 32000:
+        raise ValueError("Additive generation would exceed the 32000-note output limit")
+    notes = sorted(notes, key=lambda n: n["start_time"])
     base = notes[0]["start_time"]
     out = []
     cursor = 0.0
@@ -228,7 +237,6 @@ def _motif_from_pitches(pitches, note_length, velocity):
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def transform_clip(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     op: str,
@@ -301,7 +309,6 @@ def _motif_source(track_index, pitches, note_length, velocity, source_clip_index
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_phase(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     pitches: str = "60 62 64 67 69",
@@ -340,7 +347,6 @@ def generate_phase(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_additive(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     pitches: str = "60 62 64 65 67 69",

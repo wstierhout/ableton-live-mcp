@@ -13,13 +13,12 @@ tonic on a clean scale; `duration` and `product` best reflect what a listener
 actually hears when note lengths vary.
 """
 
-import json
+import time
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-from ..connection import get_ableton_connection
+from ..connection import AbletonCommandError, get_ableton_connection
 from ._als_parse import _load
 
 # Krumhansl-Kessler key profiles: the perceived tonal hierarchy of the 12
@@ -173,9 +172,7 @@ def _normalize_notes(raw_notes):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def detect_clip_key(
-    ctx: Context, track_index: int, clip_index: int, weight: str = "duration"
-) -> str:
+def detect_clip_key(track_index: int, clip_index: int, weight: str = "duration") -> dict:
     """Detect the key/scale of one Session MIDI clip (Krumhansl-Kessler). Reads
     the clip's notes and returns the best-fit key with a confidence (-1..1),
     margin over the runner-up, and the runner-up key. `weight` is how notes are
@@ -186,15 +183,12 @@ def detect_clip_key(
     )
     notes = _normalize_notes(raw.get("notes", []))
     result = detect_key(notes, weight=weight)
-    return json.dumps(
-        {
-            "track_index": track_index,
-            "clip_index": clip_index,
-            "clip_name": raw.get("clip_name"),
-            **result,
-        },
-        indent=2,
-    )
+    return {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "clip_name": raw.get("clip_name"),
+        **result,
+    }
 
 
 def _pool_track_notes(conn, track_index, info):
@@ -209,8 +203,12 @@ def _pool_track_notes(conn, track_index, info):
             raw = conn.send_command(
                 "get_clip_notes", {"track_index": track_index, "clip_index": slot.get("index")}
             )
-        except Exception:
-            continue  # audio clip or unreadable slot: skip, keep pooling MIDI
+        except AbletonCommandError as exc:
+            if str(exc) != "Not a MIDI clip":
+                raise
+            continue
+        if len(notes) + len(raw.get("notes", [])) > 32000:
+            raise ValueError("Track exceeds 32000 notes; analyze individual clips instead")
         added = _normalize_notes(raw.get("notes", []))
         if added:
             clips_used += 1
@@ -219,7 +217,7 @@ def _pool_track_notes(conn, track_index, info):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def detect_track_key(ctx: Context, track_index: int, weight: str = "duration") -> str:
+def detect_track_key(track_index: int, weight: str = "duration") -> dict:
     """Detect the key/scale of a whole track by pooling the notes of every
     Session clip it holds (Krumhansl-Kessler). Useful when a part is spread
     across several clips. `weight` selects the histogram weighting ("duration",
@@ -228,44 +226,96 @@ def detect_track_key(ctx: Context, track_index: int, weight: str = "duration") -
     info = conn.send_command("get_track_info", {"track_index": track_index})
     notes, clips_used = _pool_track_notes(conn, track_index, info)
     result = detect_key(notes, weight=weight)
-    return json.dumps(
-        {
-            "track_index": track_index,
-            "track_name": info.get("name"),
-            "clips_analyzed": clips_used,
-            **result,
-        },
-        indent=2,
-    )
+    return {
+        "track_index": track_index,
+        "track_name": info.get("name"),
+        "clips_analyzed": clips_used,
+        **result,
+    }
+
+
+def _legacy_session_notes(conn):
+    """Bounded compatibility path for bridges without bulk reads."""
+    snapshot = conn.send_command("get_session_snapshot")
+    notes, skipped, reasons = [], [], set()
+    tracks_used = clips_read = slots_read = 0
+    deadline = time.monotonic() + 30
+    tracks = snapshot.get("tracks", [])
+    if len(tracks) > 128:
+        reasons.add("track_limit")
+    stop = False
+    for track in tracks[:128]:
+        if track.get("type") != "midi":
+            continue
+        if time.monotonic() >= deadline:
+            reasons.add("scan_budget")
+            break
+        info = conn.send_command("get_track_info", {"track_index": track["index"]})
+        used = False
+        for slot in info.get("clip_slots", []):
+            if (
+                slots_read >= 2048
+                or clips_read >= 128
+                or len(notes) >= 32000
+                or time.monotonic() >= deadline
+            ):
+                reasons.add("scan_budget")
+                stop = True
+                break
+            slots_read += 1
+            if not slot.get("has_clip"):
+                continue
+            try:
+                raw = conn.send_command(
+                    "get_clip_notes", {"track_index": track["index"], "clip_index": slot["index"]}
+                )
+            except AbletonCommandError as exc:
+                skipped.append(
+                    {"track_index": track["index"], "clip_index": slot["index"], "error": str(exc)}
+                )
+                continue
+            chunk = raw.get("notes", [])
+            room = 32000 - len(notes)
+            notes.extend(chunk[:room])
+            if len(chunk) > room:
+                reasons.add("note_limit")
+            used = used or bool(chunk)
+            clips_read += 1
+        tracks_used += int(used)
+        if stop:
+            break
+    return {
+        "notes": notes,
+        "tracks_analyzed": tracks_used,
+        "clips_analyzed": clips_read,
+        "partial": bool(reasons or skipped),
+        "skipped": skipped,
+        "limit_reasons": sorted(reasons),
+        "read_mode": "legacy_per_clip",
+        "coverage": "Session MIDI clips; bounded legacy bridge reads",
+    }
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def detect_session_key(ctx: Context, weight: str = "duration") -> str:
+def detect_session_key(weight: str = "duration") -> dict:
     """Detect the overall key/scale of the whole set by pooling the notes of
-    every MIDI track's Session clips (Krumhansl-Kessler). Gives the harmonic
-    center of the arrangement as a whole. `weight` selects the histogram
-    weighting ("duration", "velocity", "product", "count"). Reads only."""
+    MIDI tracks' Session clips (Krumhansl-Kessler). Gives the harmonic
+    center of the Session clips (not the Arrangement timeline). `weight` selects the histogram
+    weighting ("duration", "velocity", "product", "count"). Reads only. Scans are
+    bounded: check partial/limit_reasons for incomplete coverage. New bridges read
+    clips across Live ticks; older bridges use a bounded per-clip fallback."""
     conn = get_ableton_connection()
-    # One snapshot gives track types, so we only fetch clip slots for MIDI tracks.
-    snapshot = conn.send_command("get_session_snapshot")
-    notes = []
-    tracks_used = 0
-    for track in snapshot.get("tracks", []):
-        if track.get("type") != "midi":
-            continue
-        info = conn.send_command("get_track_info", {"track_index": track["index"]})
-        pooled, _ = _pool_track_notes(conn, track["index"], info)
-        if pooled:
-            tracks_used += 1
-            notes.extend(pooled)
-    result = detect_key(notes, weight=weight)
-    return json.dumps({"tracks_analyzed": tracks_used, **result}, indent=2)
+    pooled = (
+        conn.send_command("get_session_notes")
+        if conn.supports_capability("bulk_session_notes")
+        else _legacy_session_notes(conn)
+    )
+    result = detect_key(_normalize_notes(pooled.pop("notes", [])), weight=weight)
+    return {**pooled, **result}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_detect_key(
-    ctx: Context, path: str, track_index: int | None = None, weight: str = "duration"
-) -> str:
+def als_detect_key(path: str, track_index: int | None = None, weight: str = "duration") -> dict:
     """Detect the key/scale of a saved .als file WITHOUT Live running
     (Krumhansl-Kessler). Pools notes from every MIDI clip in the set, or only
     one track when `track_index` is given. `weight` selects the histogram
@@ -291,11 +341,8 @@ def als_detect_key(
             if clip.get("is_midi"):
                 notes.extend(_normalize_notes(clip.get("notes", [])))
     result = detect_key(notes, weight=weight)
-    return json.dumps(
-        {
-            "path": data["path"],
-            "track_index": track_index,
-            **result,
-        },
-        indent=2,
-    )
+    return {
+        "path": data["path"],
+        "track_index": track_index,
+        **result,
+    }

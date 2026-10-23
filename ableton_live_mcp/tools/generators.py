@@ -1,14 +1,14 @@
 """Server-side musical generators: patterns computed here, written via wire commands.
 
 These tools do music-theory work locally and send plain note data to Live, so
-they carry zero Live-API risk and always compose with the primitive tools.
+they use the same primitive tools and replace notes in the target clips.
 """
 
 import json
+import math
 import random
 from typing import Annotated, Literal
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -234,6 +234,21 @@ def _note(pitch, start, dur, vel, mute=False):
 def _write_clip(track_index, clip_index, length, notes):
     """Create the clip if the slot is empty (resize it if not), then REPLACE its
     notes. 2-3 wire calls."""
+    if not math.isfinite(length) or length <= 0 or len(notes) > 32000:
+        raise ValueError("Use a finite positive clip length and at most 32000 notes")
+    for note in notes:
+        if (
+            not 0 <= note["pitch"] <= 127
+            or not 1 <= note["velocity"] <= 127
+            or not math.isfinite(note["start_time"])
+            or note["start_time"] < 0
+            or not math.isfinite(note["duration"])
+            or note["duration"] <= 0
+        ):
+            raise ValueError("Generated notes contain invalid pitches, velocity or timing")
+    payload = json.dumps(notes, allow_nan=False).encode("utf-8")
+    if len(payload) > 8 * 1024 * 1024:
+        raise ValueError("Generated notes exceed the 8 MiB output limit")
     conn = get_ableton_connection()
     try:
         conn.send_command(
@@ -268,7 +283,6 @@ def _write_clip(track_index, clip_index, length, notes):
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_drum_pattern(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     style: str = "lofi",
@@ -288,6 +302,8 @@ def generate_drum_pattern(
     if style not in DRUM_STYLES:
         raise ValueError(f"Unknown style '{style}'. Known: {sorted(DRUM_STYLES)}")
     bars = max(1, int(bars))
+    if bars * sum(len(hits) for hits in DRUM_STYLES[style].values()) > 32000:
+        raise ValueError("Drum pattern exceeds the 32000-note output limit")
     humanize = max(0, int(humanize))
     rng = random.Random(seed)
     notes = []
@@ -305,7 +321,6 @@ def generate_drum_pattern(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
 def generate_chord_progression(
-    ctx: Context,
     track_index: TrackIndex,
     clip_index: ClipIndex,
     progression: ChordProgression,
@@ -323,7 +338,15 @@ def generate_chord_progression(
     supported qualities include maj7, m7, m9, 9, 13, 7#9, sus4, dim, and add9.
     Use add_notes_to_clip for exact notes or edit_notes to preserve existing ones.
     """
+    if (
+        len(progression) > 32000
+        or not math.isfinite(beats_per_chord)
+        or not 0 < beats_per_chord <= 1024
+    ):
+        raise ValueError("Progression too large or beats_per_chord outside (0, 1024]")
     symbols = _split_progression(progression)
+    if len(symbols) * max(2, math.ceil(beats_per_chord)) * 8 > 32000:
+        raise ValueError("Progression exceeds the 32000-note output budget")
     notes = []
     for i, sym in enumerate(symbols):
         root_pc, intervals = _parse_chord(sym)
@@ -352,7 +375,6 @@ def generate_chord_progression(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_bassline(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     progression: str,
@@ -370,7 +392,15 @@ def generate_bassline(
     """
     if not 0 <= octave <= 8:
         raise ValueError(f"octave must be 0-8 (2 = typical bass), got {octave}")
+    if (
+        len(progression) > 32000
+        or not math.isfinite(beats_per_chord)
+        or not 0 < beats_per_chord <= 1024
+    ):
+        raise ValueError("Progression too large or beats_per_chord outside (0, 1024]")
     symbols = _split_progression(progression)
+    if len(symbols) * max(2, math.ceil(beats_per_chord)) * 8 > 32000:
+        raise ValueError("Progression exceeds the 32000-note output budget")
     base = 12 * (octave + 1)
     notes = []
     for i, sym in enumerate(symbols):
@@ -409,7 +439,6 @@ def generate_bassline(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def write_drum_grid(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     grid: str,
@@ -422,21 +451,30 @@ def write_drum_grid(
     Line length = number of 16th steps (16 = one 4/4 bar; 32 = two bars...).
     Instruments: kick snare rim clap chat phat ohat ltom mtom htom crash ride perc shaker,
     or a raw MIDI number ("36: x...").
+    At most 1,048,576 grid characters and 32,000 hits; unknown pattern characters fail.
 
     Example (one bar of lofi):
       kick:  X..x......X.....
       snare: ....x.......x...
       chat:  x.o.x.o.x.o.x.o.
     """
+    if len(grid) > 1_048_576 or not math.isfinite(swing):
+        raise ValueError("Use at most 1,048,576 grid characters and finite swing")
     VEL = {"X": 105, "x": 85, "o": 55}
     notes = []
     max_steps = 0
     for line in grid.strip().splitlines():
-        if ":" not in line:
+        if not line.strip():
             continue
+        if ":" not in line:
+            raise ValueError("Each grid row must be 'instrument: pattern'")
         name, pattern = line.split(":", 1)
         name = name.strip().lower()
-        pattern = pattern.strip().replace(" ", "")
+        pattern = "".join(pattern.split())
+        if set(pattern) - set("Xxo.-"):
+            raise ValueError("Grid patterns support only X, x, o, . and -")
+        if len(notes) + sum(pattern.count(char) for char in VEL) > 32000:
+            raise ValueError("Grid exceeds the 32000-note limit")
         pitch = DRUM_MAP.get(name)
         if pitch is None:
             if not name.isdigit():
@@ -461,15 +499,24 @@ def write_drum_grid(
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def setup_session(ctx: Context, tempo: float, tracks: list[dict]) -> str:
+def setup_session(tempo: float, tracks: list[dict]) -> dict:
     """Bootstrap a session in one call: set tempo and create named MIDI tracks,
     optionally loading an instrument found by name for each.
 
     tracks: [{"name": "Drums", "instrument": "drum kit"}, {"name": "Bass",
     "instrument": "upright bass"}, ...]. "instrument" is a search_browser query
-    (best match is loaded); omit it to create an empty track.
+    (the first returned match is loaded); omit it to create an empty track.
     Returns a per-track report with the loaded item names.
     """
+    if not math.isfinite(tempo) or not 20 <= tempo <= 999:
+        raise ValueError("tempo must be finite and in 20..999 BPM")
+    if len(tracks) > 127:
+        raise ValueError("setup_session supports at most 127 new tracks")
+    for spec in tracks:
+        if not isinstance(spec, dict) or ("name" in spec and not isinstance(spec["name"], str)):
+            raise ValueError("Each track must be an object with an optional string name")
+        if spec.get("instrument") is not None and not isinstance(spec["instrument"], str):
+            raise ValueError("instrument must be a browser search string")
     conn = get_ableton_connection()
     # one round-trip / one undo step for tempo + creation; a second for renames
     created = conn.send_command(
@@ -480,18 +527,19 @@ def setup_session(ctx: Context, tempo: float, tracks: list[dict]) -> str:
         },
     )
     indices = [r["result"]["index"] for r in created["results"][1:]]
-    conn.send_command(
-        "batch",
-        {
-            "commands": [
-                {
-                    "type": "set_track_name",
-                    "params": {"track_index": idx, "name": spec.get("name", f"Track {idx}")},
-                }
-                for idx, spec in zip(indices, tracks)
-            ]
-        },
-    )
+    if indices:
+        conn.send_command(
+            "batch",
+            {
+                "commands": [
+                    {
+                        "type": "set_track_name",
+                        "params": {"track_index": idx, "name": spec.get("name", f"Track {idx}")},
+                    }
+                    for idx, spec in zip(indices, tracks)
+                ]
+            },
+        )
     report = []
     for idx, spec in zip(indices, tracks):
         entry = {"track_index": idx, "name": spec.get("name")}
@@ -506,6 +554,12 @@ def setup_session(ctx: Context, tempo: float, tracks: list[dict]) -> str:
                 entry["loaded"] = matches[0]["name"]
             else:
                 entry["loaded"] = None
-                entry["note"] = f"no browser match for '{query}'"
+                entry["note"] = (
+                    f"browser search incomplete for '{query}'; narrow the category/query"
+                    if found.get("partial")
+                    else f"no browser match for '{query}'"
+                )
+            entry["search_partial"] = bool(found.get("partial"))
+            entry["search_limit_reasons"] = found.get("limit_reasons", [])
         report.append(entry)
-    return json.dumps({"tempo": tempo, "tracks": report}, indent=2)
+    return {"tempo": tempo, "tracks": report}

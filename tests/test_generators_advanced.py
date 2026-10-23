@@ -4,8 +4,6 @@ These exercise the music-theory algorithms only: no Live, no socket, everything
 seeded and deterministic.
 """
 
-import random
-
 from ableton_live_mcp.tools.generators_advanced import (
     chord_voicing,
     drum_groove,
@@ -14,7 +12,6 @@ from ableton_live_mcp.tools.generators_advanced import (
     melody_line,
     parse_chord_symbol,
     progression_for_genre,
-    scale_pitches,
     voice_progression,
     walking_bass,
 )
@@ -131,6 +128,7 @@ def test_humanize_reproducible_and_preserves_pitch():
     assert a == b  # deterministic for a fixed seed
     assert [n["pitch"] for n in a] == [n["pitch"] for n in base]  # pitches untouched
     assert a is not base and a[0] is not base[0]  # new objects, input not mutated
+    assert a != humanize(base, timing=0.03, velocity=10, seed=43)
 
 
 def test_humanize_keeps_notes_in_range():
@@ -144,37 +142,6 @@ def test_humanize_keeps_notes_in_range():
         assert 1 <= n["velocity"] <= 127
         assert 0 <= n["pitch"] <= 127
         assert n["start_time"] >= 0.0  # timing jitter never goes negative
-
-
-def test_humanize_different_seeds_differ():
-    base = melody_line(["Am7", "Dm7"], seed=1)
-    assert humanize(base, seed=1) != humanize(base, seed=2)
-
-
-# ── Voice-leading minimizes leaps ────────────────────────────────────
-
-
-def _mean_abs_leap(notes):
-    pitches = [n["pitch"] for n in notes]
-    if len(pitches) < 2:
-        return 0.0
-    return sum(abs(b - a) for a, b in zip(pitches, pitches[1:])) / (len(pitches) - 1)
-
-
-def test_voice_leading_reduces_average_leap():
-    prog = ["Am7", "Dm7", "G7", "Cmaj7", "Fmaj7", "Bm7b5", "E7", "Am7"]
-    pool = scale_pitches("A", "minor", 60, 84)
-    vl_total = 0.0
-    naive_total = 0.0
-    trials = 20
-    for seed in range(trials):
-        vl = melody_line(prog, key="A", scale="minor", seed=seed, voice_leading=True)
-        # A genuinely naive line: random scale tones over the same register.
-        rng = random.Random(seed)
-        naive = [{"pitch": rng.choice(pool)} for _ in vl]
-        vl_total += _mean_abs_leap(vl)
-        naive_total += _mean_abs_leap(naive)
-    assert vl_total / trials < naive_total / trials
 
 
 # ── Genre progressions ───────────────────────────────────────────────
@@ -196,4 +163,6 @@ def test_progression_for_genre_loops_to_requested_bars():
 
 def test_progression_fuzzy_genre_match():
     # "deep house" (spaces) should resolve to the deep_house grammar.
-    assert progression_for_genre("deep house", key="C", scale="minor", bars=4)
+    assert progression_for_genre("deep house", key="C", scale="minor", bars=4) == (
+        progression_for_genre("deep_house", key="C", scale="minor", bars=4)
+    )

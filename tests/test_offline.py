@@ -7,11 +7,12 @@ inverted as the track activator; the master's dynamics usually sit inside a
 rack; frozen tracks store phantom clips under FreezeSequencer).
 """
 
+import asyncio
 import gzip
-import json
 
 import pytest
 
+from ableton_live_mcp.app import mcp
 from ableton_live_mcp.tools import offline
 from ableton_live_mcp.tools._als_parse import _load
 
@@ -246,7 +247,7 @@ def test_non_ableton_xml_error(tmp_path):
 
 
 def test_als_summary_tool(als):
-    out = json.loads(offline.als_summary(None, als))
+    out = offline.als_summary(als)
     assert out["tempo"] == 92.5
     assert out["track_count"] == 2
     tracks = {t["name"]: t for t in out["tracks"]}
@@ -255,7 +256,7 @@ def test_als_summary_tool(als):
 
 
 def test_als_find_unfinished_tool(als):
-    out = json.loads(offline.als_find_unfinished(None, als))
+    out = offline.als_find_unfinished(als)
     codes = {i["code"] for i in out["issues"]}
     # The muted MIDI track and empty audio track must be flagged...
     assert "muted_track" in codes
@@ -267,16 +268,46 @@ def test_als_find_unfinished_tool(als):
 def test_als_diff_tool(tmp_path):
     a = _write_als(tmp_path, _ALS_XML, "v1.als")
     b = _write_als(tmp_path, _ALS_XML.replace('Value="92.5"', 'Value="100"'), "v2.als")
-    out = json.loads(offline.als_diff(None, a, b))
+    out = offline.als_diff(a, b)
     assert out["changes"]["tempo"] == {"from": 92.5, "to": 100.0}
     assert out["changes"]["tracks_added"] == []
     assert out["changes"]["tracks_removed"] == []
 
 
+def test_als_diff_preserves_duplicate_and_literal_suffixed_track_names(tmp_path):
+    def changes(a, b):
+        result = asyncio.run(mcp.call_tool("als_diff", {"path_a": a, "path_b": b}))
+        assert not result.isError
+        return result.structuredContent["data"]["changes"]
+
+    tracks = "".join(
+        f'<MidiTrack><Name><EffectiveName Value="{name}"/></Name><DeviceChain>'
+        '<Mixer><Speaker><Manual Value="true"/></Speaker></Mixer>'
+        "</DeviceChain></MidiTrack>"
+        for name in ("Kick", "Kick", "Kick #2")
+    )
+    xml = f"<Ableton><LiveSet><Tracks>{tracks}</Tracks></LiveSet></Ableton>"
+    a = _write_als(tmp_path, xml, "before.als")
+    # Change only the second Kick; the literal Kick #2 must not hide it.
+    before, middle, after = xml.split('Value="true"', 2)
+    changed = 'Value="true"'.join((before, middle)) + 'Value="false"' + after
+    b = _write_als(tmp_path, changed, "after.als")
+    out = changes(a, b)
+    assert len(out["tracks_modified"]) == 1
+    modified = out["tracks_modified"][0]
+    assert modified["name"] == "Kick" and modified["occurrence"] == 2
+    assert modified["index_a"] == modified["index_b"] == 1
+    assert modified["muted"] == {"from": False, "to": True}
+    empty = _write_als(tmp_path, "<Ableton><LiveSet><Tracks/></LiveSet></Ableton>", "empty.als")
+    removed = changes(a, empty)["tracks_removed"]
+    assert len(removed) == len(set(removed)) == 3
+    assert "Kick" in removed and "Kick #2" in removed
+
+
 def test_als_extract_midi_tool(als):
-    out = json.loads(offline.als_extract_midi(None, als, 0))
+    out = offline.als_extract_midi(als, 0)
     assert out["track"] == "Keys"
     assert len(out["clips"]) == 1
     assert len(out["clips"][0]["notes"]) == 2
     with pytest.raises(ValueError, match="No track at index"):
-        offline.als_extract_midi(None, als, 9)
+        offline.als_extract_midi(als, 9)

@@ -6,6 +6,8 @@ is pure (returns a new list, never mutates its input) and deterministic.
 
 import copy
 
+import pytest
+
 from ableton_live_mcp.tools.motif import (
     additive,
     augment,
@@ -71,6 +73,8 @@ def test_transpose_up_octave_shifts_all_pitches_by_12():
     src = _motif()
     out = transpose(src, 12)
     assert [n["pitch"] for n in out] == [p["pitch"] + 12 for p in src]
+    assert [n["start_time"] for n in out] == [p["start_time"] for p in src]
+    assert [n["duration"] for n in out] == [p["duration"] for p in src]
     _assert_valid_notes(out)
 
 
@@ -80,13 +84,6 @@ def test_transpose_clamps_out_of_range_pitches():
     out_down = transpose([_note(2, 0.0, 1.0)], -12)
     assert out_down[0]["pitch"] == 0  # -10 clamped up
     _assert_valid_notes(out)
-
-
-def test_transpose_preserves_timing():
-    src = _motif()
-    out = transpose(src, 3)
-    assert [n["start_time"] for n in out] == [p["start_time"] for p in src]
-    assert [n["duration"] for n in out] == [p["duration"] for p in src]
 
 
 # ── invert ────────────────────────────────────────────────────────────
@@ -125,13 +122,6 @@ def test_retrograde_reverses_onset_order():
     assert order == list(reversed(range(len(src))))
 
 
-def test_retrograde_preserves_duration_set():
-    src = _motif()
-    out = retrograde(src)
-    assert sorted(n["duration"] for n in out) == sorted(p["duration"] for p in src)
-    _assert_valid_notes(out)
-
-
 def test_retrograde_mirrors_uneven_durations():
     src = [_note(60, 0.0, 0.5), _note(62, 0.5, 1.5), _note(64, 2.0, 1.0)]  # total end = 3.0
     out = retrograde(src)
@@ -139,42 +129,32 @@ def test_retrograde_mirrors_uneven_durations():
     assert out[0]["start_time"] == 2.5 and out[0]["duration"] == 0.5
     # note at [2.0,3.0] -> [0.0, 1.0]
     assert out[2]["start_time"] == 0.0 and out[2]["duration"] == 1.0
+    assert sorted(n["duration"] for n in out) == [0.5, 1.0, 1.5]
+    _assert_valid_notes(out)
 
 
 # ── augment ───────────────────────────────────────────────────────────
 
 
-def test_augment_double_scales_starts_and_durations():
+@pytest.mark.parametrize("factor", [2.0, 0.5])
+def test_augment_scales_starts_and_durations(factor):
     src = _motif()
-    out = augment(src, 2.0)
+    out = augment(src, factor)
     for orig, got in zip(src, out):
-        assert got["start_time"] == orig["start_time"] * 2.0
-        assert got["duration"] == orig["duration"] * 2.0
+        assert got["start_time"] == orig["start_time"] * factor
+        assert got["duration"] == orig["duration"] * factor
         assert got["pitch"] == orig["pitch"]  # pitch untouched
     _assert_valid_notes(out)
-
-
-def test_augment_compresses_when_factor_below_one():
-    src = _motif()
-    out = augment(src, 0.5)
-    for orig, got in zip(src, out):
-        assert got["start_time"] == orig["start_time"] * 0.5
-        assert got["duration"] == orig["duration"] * 0.5
 
 
 # ── phase_pattern ─────────────────────────────────────────────────────
 
 
-def test_phase_pattern_triples_note_count():
+def test_phase_pattern_shifts_each_copy_later():
     src = _motif()
     out = phase_pattern(src, repeats=3, shift=0.25)
     assert len(out) == 3 * len(src)
     _assert_valid_notes(out)
-
-
-def test_phase_pattern_shifts_each_copy_later():
-    src = _motif()
-    out = phase_pattern(src, repeats=3, shift=0.25)
     n = len(src)
     # copy 0 unshifted, copy 1 +0.25, copy 2 +0.50 relative to the source onsets
     for k in range(3):
@@ -194,6 +174,8 @@ def test_additive_builds_up_triangular_count():
     out = additive(src, 4)
     # stages of 1 + 2 + 3 + 4 notes
     assert len(out) == 1 + 2 + 3 + 4
+    assert out[0]["pitch"] == src[0]["pitch"]
+    assert out[0]["start_time"] == 0.0
     _assert_valid_notes(out)
 
 
@@ -201,10 +183,3 @@ def test_additive_caps_steps_at_length():
     src = _motif()  # 4 notes
     out = additive(src, 99)
     assert len(out) == 1 + 2 + 3 + 4  # capped at 4 stages
-
-
-def test_additive_first_stage_is_first_note():
-    src = _motif()
-    out = additive(src, 4)
-    assert out[0]["pitch"] == src[0]["pitch"]
-    assert out[0]["start_time"] == 0.0

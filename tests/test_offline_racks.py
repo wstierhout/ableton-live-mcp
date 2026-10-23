@@ -1,14 +1,11 @@
 """Unit tests for the offline .adg/.adv rack parser in offline_racks.
 
 Everything here is offline: no Live, no socket. The core cases run against small
-synthetic gzipped .adg fixtures built inline so the assertions are exact; one
-extra test parses a real factory drum-rack .adg if the pack is installed (and
-skips cleanly if it is not).
+synthetic gzipped .adg fixtures with exact assertions. Validate real factory racks
+separately in Live.
 """
 
-import glob
 import gzip
-import json
 
 import pytest
 
@@ -218,17 +215,17 @@ def test_drum_rack_samples_and_edition(drum_rack):
 
 
 def test_tools_return_valid_json(instrument_rack):
-    summary = json.loads(adg_summary(None, instrument_rack))
+    summary = adg_summary(instrument_rack)
     assert summary["name"] == "Synth Rack"
     assert summary["device_count"] == 2
     assert summary["macro_count"] == 1
     assert summary["edition"] == "suite"
 
-    full = json.loads(adg_analyze(None, instrument_rack))
+    full = adg_analyze(instrument_rack)
     assert full["chains"][0]["name"] == "Lead"
     assert [m["name"] for m in full["macros"]] == ["Cutoff"]
 
-    edition = json.loads(adg_edition(None, instrument_rack))
+    edition = adg_edition(instrument_rack)
     assert edition["edition"] == "suite"
     assert "Operator" in edition["suite_devices"]
 
@@ -254,37 +251,4 @@ def test_tool_raises_valueerror_on_bad_file(tmp_path):
     bad = tmp_path / "broken.adg"
     bad.write_bytes(b"nonsense")
     with pytest.raises(ValueError):
-        adg_summary(None, str(bad))
-
-
-# ── real factory drum rack (optional) ────────────────────────────────
-
-_REAL_ADG_GLOBS = [
-    "/Users/wouterstierhout/Music/Ableton/Factory Packs/Chop and Swing/Drums/Wah Soul Kit.adg",
-    "/Users/wouterstierhout/Music/Ableton/Factory Packs/**/Drums/*.adg",
-]
-
-
-def _find_real_drum_rack():
-    for pattern in _REAL_ADG_GLOBS:
-        for hit in sorted(glob.glob(pattern, recursive=True)):
-            return hit
-    return None
-
-
-def test_real_factory_drum_rack_parses():
-    path = _find_real_drum_rack()
-    if path is None:
-        pytest.skip("no factory drum-rack .adg installed on this machine")
-    data, err = r._load(path, detail=True)
-    assert err is None, err
-    assert data["is_drum_rack"] is True
-    assert len(data["drum_pads"]) > 0
-    # Every pad resolves to a real MIDI note and most reference a sample.
-    for pad in data["drum_pads"]:
-        assert pad["midi_note"] is None or 0 <= pad["midi_note"] <= 127
-    assert any(p["sample"] for p in data["drum_pads"])
-    assert data["edition"] in ("intro", "standard", "suite")
-    # Tools run end-to-end on the real file without raising.
-    json.loads(adg_summary(None, path))
-    json.loads(adg_analyze(None, path))
+        adg_summary(str(bad))

@@ -1,8 +1,5 @@
 """Clip creation, MIDI notes, quantize, grooves, and clip properties."""
 
-import json
-
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -30,7 +27,7 @@ VALID_GRIDS = (
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def create_clip(ctx: Context, track_index: int, clip_index: int, length: float = 4.0) -> str:
+def create_clip(track_index: int, clip_index: int, length: float = 4.0) -> dict:
     """Create an empty MIDI clip in a Session slot. Fails if the slot already has
     a clip (pick another clip_index or delete_clip first) or the track is an
     audio track. length is in beats (4.0 = one 4/4 bar).
@@ -38,14 +35,13 @@ def create_clip(ctx: Context, track_index: int, clip_index: int, length: float =
     duplicate_to_arrangement.
     """
     ableton = get_ableton_connection()
-    ableton.send_command(
+    return ableton.send_command(
         "create_clip", {"track_index": track_index, "clip_index": clip_index, "length": length}
     )
-    return f"Created new clip at track {track_index}, slot {clip_index} with length {length} beats"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def create_audio_clip(ctx: Context, track_index: int, clip_index: int, path: str) -> str:
+def create_audio_clip(track_index: int, clip_index: int, path: str) -> dict:
     """
     Create a new audio clip in an audio track's clip slot by importing a file.
 
@@ -60,17 +56,16 @@ def create_audio_clip(ctx: Context, track_index: int, clip_index: int, path: str
       track must be an audio track and the clip slot must be empty.
     """
     ableton = get_ableton_connection()
-    result = ableton.send_command(
+    return ableton.send_command(
         "create_audio_clip",
         {"track_index": track_index, "clip_index": clip_index, "path": path},
     )
-    return f"Created audio clip '{result.get('name', 'clip')}' at track {track_index}, slot {clip_index} (length {result.get('length', '?')} beats)"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def add_notes_to_clip(
-    ctx: Context, track_index: int, clip_index: int, notes: list[dict[str, int | float | bool]]
-) -> str:
+    track_index: int, clip_index: int, notes: list[dict[str, int | float | bool]]
+) -> dict:
     """REPLACES the clip's entire note content with the given notes. Use edit_notes
     to add or remove a subset without touching the rest.
 
@@ -79,31 +74,27 @@ def add_notes_to_clip(
     Precondition: the clip must exist (create_clip first).
     """
     ableton = get_ableton_connection()
-    ableton.send_command(
+    return ableton.send_command(
         "add_notes_to_clip",
         {"track_index": track_index, "clip_index": clip_index, "notes": notes},
     )
-    return f"Added {len(notes)} notes to clip at track {track_index}, slot {clip_index}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
-def set_clip_name(
-    ctx: Context, track_index: TrackIndex, clip_index: ClipIndex, name: DisplayName
-) -> str:
+def set_clip_name(track_index: TrackIndex, clip_index: ClipIndex, name: DisplayName) -> dict:
     """Rename an existing Session-view clip without changing its notes or audio.
 
     The slot must contain a clip. Use this for the clip label; use set_track_name
     for the track label. Repeating the same name has no additional effect.
     """
     ableton = get_ableton_connection()
-    ableton.send_command(
+    return ableton.send_command(
         "set_clip_name", {"track_index": track_index, "clip_index": clip_index, "name": name}
     )
-    return f"Renamed clip at track {track_index}, slot {clip_index} to '{name}'"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
-def fire_clip(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
+def fire_clip(track_index: TrackIndex, clip_index: ClipIndex) -> dict:
     """Launch one existing Session-view clip using Live's launch quantization.
 
     The slot must contain a clip. Launching it takes Session control of that
@@ -112,12 +103,11 @@ def fire_clip(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> s
     Use fire_scene to launch a whole row, or continue_playing for transport only.
     """
     ableton = get_ableton_connection()
-    ableton.send_command("fire_clip", {"track_index": track_index, "clip_index": clip_index})
-    return f"Started playing clip at track {track_index}, slot {clip_index}"
+    return ableton.send_command("fire_clip", {"track_index": track_index, "clip_index": clip_index})
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def stop_clip(ctx: Context, track_index: int, clip_index: int) -> str:
+def stop_clip(track_index: int, clip_index: int) -> dict:
     """
     Stop playing a clip.
 
@@ -126,77 +116,70 @@ def stop_clip(ctx: Context, track_index: int, clip_index: int) -> str:
     - clip_index: The index of the clip slot containing the clip
     """
     ableton = get_ableton_connection()
-    ableton.send_command("stop_clip", {"track_index": track_index, "clip_index": clip_index})
-    return f"Stopped clip at track {track_index}, slot {clip_index}"
+    return ableton.send_command("stop_clip", {"track_index": track_index, "clip_index": clip_index})
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-def delete_clip(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
+def delete_clip(track_index: TrackIndex, clip_index: ClipIndex) -> dict:
     """Delete the existing Session-view clip in a slot, including its content.
 
     This leaves the slot empty and does not shift other slot indices. It fails
     for an empty slot. Use stop_clip if the intent is only to stop playback;
     use undo immediately if the deletion was accidental.
     """
-    get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "delete_clip", {"track_index": track_index, "clip_index": clip_index}
     )
-    return f"Deleted clip at track {track_index}, slot {clip_index}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
-def get_clip_notes(ctx: Context, track_index: TrackIndex, clip_index: ClipIndex) -> str:
-    """Return every MIDI note in an existing Session-view MIDI clip.
+def get_clip_notes(track_index: TrackIndex, clip_index: ClipIndex) -> dict:
+    """Return every MIDI note in a Session clip, up to 32,000; larger clips fail.
 
     Each note includes pitch, start time, duration, velocity, and mute state;
     newer Live versions may add expression fields. This is read-only and fails
-    for an empty slot or audio clip. Use get_clip_info for clip properties.
+    for an empty slot or audio clip. Use get_clip_info for clip properties,
+    or detect_session_key for bounded analysis of a larger set.
     """
-    result = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "get_clip_notes", {"track_index": track_index, "clip_index": clip_index}
     )
-    return json.dumps(result, indent=2)
 
 
 # ── Grooves, quantize, audio clips, returns, automation, and clip ops ──
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_grooves(ctx: Context) -> str:
+def get_grooves() -> dict:
     """List grooves in the Groove Pool (index + name) and the global groove amount."""
-    return json.dumps(get_ableton_connection().send_command("get_grooves"), indent=2)
+    return get_ableton_connection().send_command("get_grooves")
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_clip_groove(
-    ctx: Context, track_index: int, clip_index: int, groove_index: int | None = None
-) -> str:
+def set_clip_groove(track_index: int, clip_index: int, groove_index: int | None = None) -> dict:
     """Attach a Groove Pool groove to a clip by index (swing/timing feel). Pass no groove_index to clear."""
     p = {"track_index": track_index, "clip_index": clip_index}
     if groove_index is not None:
         p["groove_index"] = groove_index
-    r = get_ableton_connection().send_command("set_clip_groove", p)
-    return f"Clip groove: {r.get('groove')}"
+    return get_ableton_connection().send_command("set_clip_groove", p)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def quantize_clip(
-    ctx: Context, track_index: int, clip_index: int, grid: str = "sixteenth", amount: float = 1.0
-) -> str:
+    track_index: int, clip_index: int, grid: str = "sixteenth", amount: float = 1.0
+) -> dict:
     """Quantize a MIDI clip. grid: quarter/eighth/eighth_triplet/sixteenth/sixteenth_triplet/thirtysecond.
     amount 0.0-1.0 (use <1.0 to humanize toward the grid without full snap)."""
     if grid not in VALID_GRIDS:
         raise ValueError(f"Unknown grid '{grid}'. Valid: {', '.join(VALID_GRIDS)}")
-    get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "quantize_clip",
         {"track_index": track_index, "clip_index": clip_index, "grid": grid, "amount": amount},
     )
-    return f"Quantized to {grid} at {amount}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def set_clip_audio(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     gain: float | None = None,
@@ -204,7 +187,7 @@ def set_clip_audio(
     pitch_fine: float | None = None,
     warping: bool | None = None,
     warp_mode: int | None = None,
-) -> str:
+) -> dict:
     """Set audio-clip properties. gain 0-1, pitch_coarse semitones (-48..48), pitch_fine cents,
     warping on/off, warp_mode 0=Beats 1=Tones 2=Texture 3=Re-Pitch 4=Complex 6=Complex Pro."""
     opts = params(
@@ -216,22 +199,20 @@ def set_clip_audio(
     )
     if not opts:
         raise ValueError("Provide at least one property to set")
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "set_clip_audio", {"track_index": track_index, "clip_index": clip_index, **opts}
     )
-    return f"Applied: {json.dumps(r)}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def set_clip_loop(
-    ctx: Context,
     track_index: TrackIndex,
     clip_index: ClipIndex,
     start: OptionalClipBeat = None,
     end: OptionalClipBeat = None,
     start_marker: OptionalClipBeat = None,
     looping: OptionalToggleState = None,
-) -> str:
+) -> dict:
     """Update selected loop and launch markers on one existing Session clip.
 
     Provide at least one optional field; omitted fields stay unchanged. `start`
@@ -243,23 +224,21 @@ def set_clip_loop(
     opts = params(start=start, end=end, start_marker=start_marker, looping=looping)
     if not opts:
         raise ValueError("Provide at least one property to set")
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "set_clip_loop", {"track_index": track_index, "clip_index": clip_index, **opts}
     )
-    return f"Applied: {json.dumps(r)}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def edit_notes(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     add: list[dict] | None = None,
     remove: list[dict] | None = None,
-) -> str:
+) -> dict:
     """Edit a subset of notes in a MIDI clip without rewriting all of them.
     add = [{pitch,start_time,duration,velocity,mute}], remove = [{pitch,start_time}] (matched by pitch+start)."""
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "edit_notes",
         {
             "track_index": track_index,
@@ -268,43 +247,36 @@ def edit_notes(
             "remove": remove or [],
         },
     )
-    return f"Clip now has {r.get('note_count')} notes (added {r.get('added')})"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
-def set_clip_color(
-    ctx: Context, track_index: TrackIndex, clip_index: ClipIndex, color_index: ColorIndex
-) -> str:
+def set_clip_color(track_index: TrackIndex, clip_index: ClipIndex, color_index: ColorIndex) -> dict:
     """Set an existing Session clip's palette color without changing its content.
 
     This is a visual organization change only. Use set_track_color to recolor
     the track header instead. Repeating the same color has no additional effect.
     """
-    get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "set_clip_color",
         {"track_index": track_index, "clip_index": clip_index, "color_index": color_index},
     )
-    return "Clip color set"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_clip_info(ctx: Context, track_index: int, clip_index: int) -> str:
+def get_clip_info(track_index: int, clip_index: int) -> dict:
     """Full clip state: loop points, markers, playing position, per-clip time
     signature; for audio clips also file path, gain display, and warp markers."""
 
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "get_clip_info", {"track_index": track_index, "clip_index": clip_index}
     )
-    return json.dumps(r, indent=2)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-def duplicate_clip_to(
-    ctx: Context, src_track: int, src_scene: int, dst_track: int, dst_scene: int
-) -> str:
+def duplicate_clip_to(src_track: int, src_scene: int, dst_track: int, dst_scene: int) -> dict:
     """Copy a Session clip to any other track/scene slot (overwrites the
     destination slot). The cross-track way to build variations."""
-    get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "duplicate_clip_to",
         {
             "src_track": src_track,
@@ -313,12 +285,10 @@ def duplicate_clip_to(
             "dst_scene": dst_scene,
         },
     )
-    return f"Copied [{src_track},{src_scene}] -> [{dst_track},{dst_scene}]"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def clip_operation(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     op: str,
@@ -327,7 +297,7 @@ def clip_operation(
     destination_time: float | None = None,
     pitch: int | None = None,
     transposition_amount: int | None = None,
-) -> str:
+) -> dict:
     """Structural clip edits. op: "duplicate_loop" (double the loop, duplicating
     notes - extend 2 bars to 4 before adding variation), "crop" (discard
     material outside the loop), "duplicate_region" (copy notes from
@@ -355,19 +325,16 @@ def clip_operation(
             pitch=pitch,
             transposition_amount=transposition_amount,
         )
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "clip_op",
         {"track_index": track_index, "clip_index": clip_index, "op": op, "params": op_params},
     )
-    return f"{op} done; clip length now {r.get('length')}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_clip_signature(
-    ctx: Context, track_index: int, clip_index: int, numerator: int, denominator: int
-) -> str:
+def set_clip_signature(track_index: int, clip_index: int, numerator: int, denominator: int) -> dict:
     """Set a clip's own time signature (polymeter / odd-bar loops)."""
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "set_clip_signature",
         {
             "track_index": track_index,
@@ -376,4 +343,3 @@ def set_clip_signature(
             "denominator": denominator,
         },
     )
-    return f"Clip signature: {r.get('signature')}"

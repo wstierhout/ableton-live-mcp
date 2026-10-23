@@ -61,3 +61,6 @@ docs/
 
 # Lock files (optional - uncomment if you don't want to track)
 # uv.lock
+# Local optional-extension build products (wheels are built in CI).
+ableton_live_mcp/_audio_native*.so
+ableton_live_mcp/_audio_native*.pyd

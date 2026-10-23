@@ -1,8 +1,5 @@
 """Arrangement view, timeline placement, and clip automation."""
 
-import json
-
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -11,18 +8,17 @@ from ._util import ClipIndex, DeviceIndex, DeviceParameter, TrackIndex
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def switch_to_arrangement_view(ctx: Context) -> str:
+def switch_to_arrangement_view() -> dict:
     """Switch Ableton's main window to the Arrangement view.
 
     Parameters:
     """
     ableton = get_ableton_connection()
-    ableton.send_command("switch_to_arrangement_view")
-    return "Switched to Arrangement view"
+    return ableton.send_command("switch_to_arrangement_view")
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
-def set_arrangement_time(ctx: Context, time: float) -> str:
+def set_arrangement_time(time: float) -> dict:
     """
     Move the arrangement playhead to a specific position.
 
@@ -30,12 +26,12 @@ def set_arrangement_time(ctx: Context, time: float) -> str:
     - time: Position in beats from the start of the arrangement (e.g. 8.0 = bar 3 in 4/4)
     """
     ableton = get_ableton_connection()
-    result = ableton.send_command("set_current_song_time", {"time": time})
-    return f"Playhead moved to beat {result.get('current_song_time', time)}"
+    ableton.require_capability("confirmed_transport")
+    return ableton.send_command("set_current_song_time", {"time": time})
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def get_arrangement_clips(ctx: Context, track_index: int) -> str:
+def get_arrangement_clips(track_index: int) -> dict:
     """
     List all clips placed in the Arrangement timeline for a track.
 
@@ -45,14 +41,11 @@ def get_arrangement_clips(ctx: Context, track_index: int) -> str:
     - track_index: The index of the track to inspect
     """
     ableton = get_ableton_connection()
-    result = ableton.send_command("get_arrangement_clips", {"track_index": track_index})
-    return json.dumps(result, indent=2)
+    return ableton.send_command("get_arrangement_clips", {"track_index": track_index})
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-def duplicate_to_arrangement(
-    ctx: Context, track_index: int, clip_index: int, destination_time: float
-) -> str:
+def duplicate_to_arrangement(track_index: int, clip_index: int, destination_time: float) -> str:
     """
     Copy a Session-view clip into the Arrangement timeline.
 
@@ -91,31 +84,29 @@ def duplicate_to_arrangement(
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
-def delete_arrangement_clip(ctx: Context, track_index: int, arrangement_clip_index: int) -> str:
+def delete_arrangement_clip(track_index: int, arrangement_clip_index: int) -> dict:
     """Delete a clip from the Arrangement timeline by its position in
     get_arrangement_clips' list. NOTE: indices of later clips on the same track
     shift down by one after each delete - re-read get_arrangement_clips between
     deletes.
     """
-    result = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "delete_arrangement_clip",
         {"track_index": track_index, "arrangement_clip_index": arrangement_clip_index},
     )
-    return f"Deleted arrangement clip '{result.get('name')}' ({result.get('start_time')}-{result.get('end_time')})"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
 def write_automation(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     device_index: int,
     parameter: str | int,
     points: list[dict[str, float]],
-) -> str:
+) -> dict:
     """Write clip automation for a device parameter. points = [{"time": beats, "value": v}, ...].
     Replaces any existing envelope for that parameter on the clip."""
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "write_automation",
         {
             "track_index": track_index,
@@ -125,17 +116,15 @@ def write_automation(
             "points": points,
         },
     )
-    return f"Wrote {r.get('point_count')} automation points for {r.get('parameter')}"
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
 def clear_automation(
-    ctx: Context,
     track_index: TrackIndex,
     clip_index: ClipIndex,
     device_index: DeviceIndex,
     parameter: DeviceParameter,
-) -> str:
+) -> dict:
     """Delete one device parameter's entire automation envelope from a clip.
 
     Resolve the device and parameter with get_device_parameters first. This
@@ -143,7 +132,7 @@ def clear_automation(
     parameter state remains. Use write_automation to replace the envelope with
     new points, or undo immediately to recover an accidental clear.
     """
-    r = get_ableton_connection().send_command(
+    return get_ableton_connection().send_command(
         "clear_automation",
         {
             "track_index": track_index,
@@ -152,4 +141,3 @@ def clear_automation(
             "parameter": parameter,
         },
     )
-    return f"Cleared automation for {r.get('parameter')}"

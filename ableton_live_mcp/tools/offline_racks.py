@@ -15,11 +15,9 @@ layout is undocumented and shifts between Live versions, so parsing is best-
 effort and tolerant: missing fields become ``None`` rather than raising.
 """
 
-import json
 import os
 import re
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -543,7 +541,7 @@ def _load(path, detail=False):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def adg_summary(ctx: Context, path: str) -> str:
+def adg_summary(path: str) -> dict:
     """Summarize a saved .adg rack or .adv device preset WITHOUT Live running:
     name, rack type, total device count, top-level chain count, named-macro
     count, required Live edition (intro/standard/suite), and whether it is a drum
@@ -553,25 +551,22 @@ def adg_summary(ctx: Context, path: str) -> str:
     data, err = _load(path)
     if err:
         raise ValueError(err)
-    return json.dumps(
-        {
-            "path": data["path"],
-            "name": data["name"],
-            "rack_type": data["rack_type"],
-            "ableton_version": data["ableton_version"],
-            "device_count": data["device_count"],
-            "chain_count": data["chain_count"],
-            "macro_count": len(data["macros"]),
-            "edition": data["edition"],
-            "is_drum_rack": data["is_drum_rack"],
-            "sample_count": len(data["samples"]),
-        },
-        indent=2,
-    )
+    return {
+        "path": data["path"],
+        "name": data["name"],
+        "rack_type": data["rack_type"],
+        "ableton_version": data["ableton_version"],
+        "device_count": data["device_count"],
+        "chain_count": data["chain_count"],
+        "macro_count": len(data["macros"]),
+        "edition": data["edition"],
+        "is_drum_rack": data["is_drum_rack"],
+        "sample_count": len(data["samples"]),
+    }
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def adg_analyze(ctx: Context, path: str) -> str:
+def adg_analyze(path: str) -> dict:
     """Full offline analysis of a .adg rack or .adv preset: named macros
     (name/value), the chain + device tree (recursive, incl. racks-inside-racks
     with each device's kind/name/on-state and any sample), legacy macro->
@@ -581,28 +576,25 @@ def adg_analyze(ctx: Context, path: str) -> str:
     data, err = _load(path, detail=True)
     if err:
         raise ValueError(err)
-    return json.dumps(
-        {
-            "path": data["path"],
-            "name": data["name"],
-            "rack_type": data["rack_type"],
-            "ableton_version": data["ableton_version"],
-            "is_drum_rack": data["is_drum_rack"],
-            "edition": data["edition"],
-            "device_count": data["device_count"],
-            "chain_count": data["chain_count"],
-            "macros": data["macros"],
-            "macro_mappings": data["macro_mappings"],
-            "chains": data["chains"],
-            "samples": data["samples"],
-            "drum_pads": data["drum_pads"],
-        },
-        indent=2,
-    )
+    return {
+        "path": data["path"],
+        "name": data["name"],
+        "rack_type": data["rack_type"],
+        "ableton_version": data["ableton_version"],
+        "is_drum_rack": data["is_drum_rack"],
+        "edition": data["edition"],
+        "device_count": data["device_count"],
+        "chain_count": data["chain_count"],
+        "macros": data["macros"],
+        "macro_mappings": data["macro_mappings"],
+        "chains": data["chains"],
+        "samples": data["samples"],
+        "drum_pads": data["drum_pads"],
+    }
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def adg_edition(ctx: Context, path: str) -> str:
+def adg_edition(path: str) -> dict:
     """Classify the Live edition a saved .adg/.adv needs, offline: 'suite' if any
     Suite-only device is present (Operator, Wavetable, Echo, Drift, Meld,
     Sampler, Collision, ...), else 'standard' if any Standard-only device is
@@ -612,14 +604,11 @@ def adg_edition(ctx: Context, path: str) -> str:
     data, err = _load(path)
     if err:
         raise ValueError(err)
-    return json.dumps(
-        {
-            "path": data["path"],
-            "name": data["name"],
-            "edition": data["edition"],
-            "suite_devices": data["suite_devices"],
-            "standard_devices": data["standard_devices"],
-            "device_count": data["device_count"],
-        },
-        indent=2,
-    )
+    return {
+        "path": data["path"],
+        "name": data["name"],
+        "edition": data["edition"],
+        "suite_devices": data["suite_devices"],
+        "standard_devices": data["standard_devices"],
+        "device_count": data["device_count"],
+    }

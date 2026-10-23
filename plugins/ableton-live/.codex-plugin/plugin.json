@@ -1,0 +1,25 @@
+{
+  "name": "ableton-live",
+  "version": "1.8.1",
+  "description": "Independent AbletonMCP integration for local Codex clients: typed music tools and a verify-after-edit workflow.",
+  "author": {
+    "name": "Wouter Stierhout",
+    "url": "https://github.com/wstierhout"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AbletonMCP (community)",
+    "shortDescription": "Control Live with a local, typed MCP bridge.",
+    "longDescription": "Connect local Codex clients to Ableton Live 11/12. Includes setup, read-first editing and offline project analysis guidance. Requires uv and a separately installed Remote Script for live control. Independently maintained; not endorsed by OpenAI or Ableton. Your AI provider may process tool inputs and outputs.",
+    "developerName": "Wouter Stierhout",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://abletonmcp.com/docs/codex/",
+    "defaultPrompt": ["Check my Ableton connection without changing the set.", "Summarize a saved .als file without opening Live.", "Help me build a beat in a new, disposable Live set."]
+  },
+  "mcpServers": "./.mcp.json",
+  "homepage": "https://abletonmcp.com/docs/codex/",
+  "repository": "https://github.com/wstierhout/ableton-live-mcp",
+  "license": "MIT",
+  "keywords": ["ableton", "music", "midi", "mcp", "codex"]
+}

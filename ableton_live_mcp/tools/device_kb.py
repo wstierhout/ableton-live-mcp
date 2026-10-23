@@ -9,9 +9,6 @@ perceptual (0.5 is NOT half the audible amount) - always read the display value
 after setting a `curve` parameter rather than assuming proportionality.
 """
 
-import json
-
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -157,7 +154,7 @@ DEVICE_KB = {
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def describe_device(ctx: Context, device_name: str) -> str:
+def describe_device(device_name: str) -> dict:
     """Return curated guidance for a common Ableton native device: which parameters
     matter, their units (note `curve` = perceptual, not proportional), sensible
     values, and mixing tips. `device_name` is case-insensitive (e.g. "EQ Eight",
@@ -174,10 +171,10 @@ def describe_device(ctx: Context, device_name: str) -> str:
             raise ValueError(
                 f"No knowledge-base entry for '{device_name}'. Known: {sorted(DEVICE_KB)}"
             )
-    return json.dumps({"device": key, **entry}, indent=2)
+    return {"device": key, **entry}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-def list_known_devices(ctx: Context) -> str:
+def list_known_devices() -> dict:
     """List the devices that describe_device has curated guidance for."""
-    return json.dumps({"devices": sorted(DEVICE_KB)}, indent=2)
+    return {"devices": sorted(DEVICE_KB)}

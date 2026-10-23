@@ -7,25 +7,11 @@ import sys
 import wave
 from pathlib import Path
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
-
-SUPPORTED_SUFFIXES = {
-    ".wav",
-    ".wave",
-    ".aif",
-    ".aiff",
-    ".aifc",
-    ".flac",
-    ".ogg",
-    ".oga",
-    ".mp3",
-    ".aac",
-    ".m4a",
-    ".mp4",
-}
+from ..audio_stats import FORMATS, channel_metrics, pcm_accumulate
+from ..cancellation import check_cancelled
 
 
 def measure_audio(path, max_seconds=30.0):
@@ -33,7 +19,7 @@ def measure_audio(path, max_seconds=30.0):
     if not math.isfinite(max_seconds) or not 0 < max_seconds <= 120:
         raise ValueError("max_seconds must be finite and in (0, 120]")
     source = Path(path).expanduser().resolve()
-    if not source.is_file() or source.suffix.lower() not in SUPPORTED_SUFFIXES:
+    if not source.is_file() or source.suffix.lower() not in FORMATS:
         raise ValueError("Provide a local WAV, AIFF/AIFF-C, FLAC, Ogg, MP3, AAC or M4A/MP4 file")
     if source.stat().st_size > 512 * 1024 * 1024:
         raise ValueError("File exceeds the 512 MiB safety limit")
@@ -46,10 +32,15 @@ def measure_audio(path, max_seconds=30.0):
             pass
         else:
             return measure_wav(source, max_seconds)
-    worker = Path(__file__).parents[1] / "_audio_decode.py"
     try:
         result = subprocess.run(
-            [sys.executable, str(worker), str(source), str(max_seconds)],
+            [
+                sys.executable,
+                "-I",
+                str(Path(__file__).resolve().parents[1] / "_audio_decode.py"),
+                str(source),
+                str(max_seconds),
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -65,10 +56,6 @@ def measure_audio(path, max_seconds=30.0):
     if result.returncode or "error" in report:
         raise ValueError(report.get("error", "Audio decoder failed"))
     return report
-
-
-def _db(value):
-    return round(20 * math.log10(value), 4) if value > 0 else None
 
 
 def measure_wav(path, max_seconds=30.0):
@@ -90,41 +77,19 @@ def measure_wav(path, max_seconds=30.0):
                 raise ValueError("No audio frames to measure")
             peak, square, sums, clipped = ([0.0] * channels for _ in range(4))
             frames = 0
-            scale = 2 ** (width * 8 - 1)
             while frames < limit:
                 chunk = audio.readframes(min(4096, limit - frames))
                 if not chunk or len(chunk) % (width * channels):
                     raise ValueError("Truncated or malformed PCM audio data")
-                for offset in range(0, len(chunk), width):
-                    channel = (offset // width) % channels
-                    integer = (
-                        chunk[offset] - 128
-                        if width == 1
-                        else int.from_bytes(chunk[offset : offset + width], "little", signed=True)
-                    )
-                    value = integer / scale
-                    peak[channel] = max(peak[channel], abs(value))
-                    square[channel] += value * value
-                    sums[channel] += value
-                    clipped[channel] += integer <= -scale or integer >= scale - 1
+                check_cancelled()
+                peak, square, sums, clipped = pcm_accumulate(
+                    chunk, width, channels, peak, square, sums, clipped
+                )
                 frames += len(chunk) // (width * channels)
     except (wave.Error, EOFError) as exc:
         raise ValueError(
             "Unsupported or invalid WAV. Export integer PCM (not float/compressed)."
         ) from exc
-    metrics = []
-    for channel in range(channels):
-        rms = math.sqrt(square[channel] / frames)
-        metrics.append(
-            {
-                "channel": channel,
-                "sample_peak_dbfs": _db(peak[channel]),
-                "rms_dbfs": _db(rms),
-                "dc_offset": sums[channel] / frames,
-                "full_scale_samples": int(clipped[channel]),
-                "crest_factor_db": _db(peak[channel] / rms) if rms else None,
-            }
-        )
     return {
         "evidence": "measured_pcm",
         "sample_rate": rate,
@@ -132,7 +97,7 @@ def measure_wav(path, max_seconds=30.0):
         "duration_seconds": total / rate,
         "analyzed_seconds": frames / rate,
         "partial": frames < total,
-        "channels": metrics,
+        "channels": channel_metrics(frames, peak, square, sums, clipped),
         "limitations": "Start of file only when partial. Sample peak is not true peak; "
         "RMS is not LUFS. Full-scale samples suggest possible clipping, "
         "not proof. Null dB means silence. No tonal/key/quality judgment.",
@@ -140,7 +105,7 @@ def measure_wav(path, max_seconds=30.0):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def analyze_audio_file(ctx: Context, path: str, max_seconds: float = 30.0) -> str:
+def analyze_audio_file(path: str, max_seconds: float = 30.0) -> dict:
     """Measure local WAV (integer/float), AIFF/AIFF-C, FLAC, Ogg Vorbis, MP3,
     AAC or M4A/MP4 (AAC/ALAC) without Live: per-channel sample peak/RMS dBFS,
     DC offset, crest factor and full-scale samples. Analyzes the first max_seconds
@@ -148,4 +113,4 @@ def analyze_audio_file(ctx: Context, path: str, max_seconds: float = 30.0) -> st
     Compressed files are measured after decoding; this does not recover lost audio.
     Files are read locally without modification, normalization or upload.
     """
-    return json.dumps(measure_audio(path, max_seconds), indent=2, allow_nan=False)
+    return measure_audio(path, max_seconds)

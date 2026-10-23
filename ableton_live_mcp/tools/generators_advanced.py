@@ -7,7 +7,7 @@ a ``seed`` and use a *local* ``random.Random`` instance (never the global RNG),
 so they are deterministic and unit-testable with no running Live. The thin
 ``@mcp.tool`` wrappers call those pure functions and ship the resulting note data
 to Live over the same ``create_clip`` / ``add_notes_to_clip`` wire commands the
-rest of the generators use, so they carry zero Live-API risk.
+rest of the generators use. Writing a part replaces the target clip's notes.
 
 Notes use the project's standard dict shape, identical to ``generators.py``:
 ``{"pitch": int 0-127, "start_time": float beats, "duration": float beats,
@@ -15,9 +15,9 @@ Notes use the project's standard dict shape, identical to ``generators.py``:
 valid MIDI ranges and start times are kept non-negative.
 """
 
+import math
 import random
 
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -148,6 +148,8 @@ def _scale_intervals(name):
 
 def scale_pitches(key, scale, low, high):
     """Every MIDI pitch of the given key+scale inside [low, high] inclusive."""
+    if not 0 <= low <= high <= 127:
+        raise ValueError("MIDI pitch range must satisfy 0 <= low <= high <= 127")
     root = _parse_note_name(key)
     intervals = _scale_intervals(scale)
     out = set()
@@ -214,6 +216,8 @@ def euclidean(pulses, steps, rotate=0):
     if steps <= 0:
         raise ValueError("steps must be positive")
     steps = int(steps)
+    if steps > 32000:
+        raise ValueError("Euclidean pattern exceeds the 32000-step limit")
     pulses = max(0, min(int(pulses), steps))
     if pulses == 0:
         pattern = [0] * steps
@@ -322,8 +326,10 @@ def voice_progression(
     Applies smooth voice-leading between chords when ``voice_leading`` is set.
     ``humanize`` adds +/- that much random velocity jitter. Returns note dicts.
     """
-    if beats_per_chord <= 0:
+    if not math.isfinite(beats_per_chord) or not 0 < beats_per_chord <= 1024:
         raise ValueError("beats_per_chord must be positive")
+    if len(chords) * max(8, int(voices)) > 32000:
+        raise ValueError("Voicing exceeds the 32000-note output limit")
     humanize = max(0, humanize)
     rng = random.Random(seed)
     notes = []
@@ -390,7 +396,7 @@ def melody_line(
     contour across each chord; ``density`` (low/medium/high) sets note rate;
     ``swing`` (0.5 straight .. ~0.66) delays off-beats. Returns note dicts.
     """
-    if beats_per_chord <= 0:
+    if not math.isfinite(beats_per_chord) or not 0 < beats_per_chord <= 1024:
         raise ValueError("beats_per_chord must be positive")
     if density not in _DENSITY_STEP:
         raise ValueError(f"Unknown density '{density}'. Known: {sorted(_DENSITY_STEP)}")
@@ -398,6 +404,8 @@ def melody_line(
         raise ValueError(f"Unknown phrase_arc '{phrase_arc}'. Known: {', '.join(_PHRASE_ARCS)}")
     rng = random.Random(seed)
     step = _DENSITY_STEP[density]
+    if len(chords) * max(1, round(beats_per_chord / step)) * 2 > 32000:
+        raise ValueError("Melody exceeds the 32000-note output limit")
     scale_notes = scale_pitches(key, scale, low, high)
     if not scale_notes:
         return []
@@ -480,10 +488,12 @@ def walking_bass(
     ``ghost`` is the per-offbeat probability of a soft ghost note; ``low``/``high``
     bound the register. Returns note dicts.
     """
-    if beats_per_chord <= 0:
+    if not math.isfinite(beats_per_chord) or not 0 < beats_per_chord <= 1024:
         raise ValueError("beats_per_chord must be positive")
     rng = random.Random(seed)
     beats = max(1, int(round(beats_per_chord)))
+    if len(chords) * beats * 2 > 32000:
+        raise ValueError("Bass line exceeds the 32000-note output limit")
     base_scale = scale_pitches(key, scale, low, high)
     notes = []
     prev = None
@@ -565,6 +575,8 @@ def drum_groove(
     humanize = max(0, humanize)
     rng = random.Random(seed)
     plan = GROOVE_STYLES[style]
+    if max(1, int(bars)) * (sum(map(len, plan.values())) + 16) > 32000:
+        raise ValueError("Drum groove exceeds the 32000-note output limit")
     base_vel = {"kick": 104, "snare": 96, "clap": 96, "chat": 52, "ohat": 70, "ride": 60}
     notes = []
     for bar in range(max(1, int(bars))):
@@ -631,6 +643,8 @@ def progression_for_genre(genre, key="C", scale="minor", bars=4):
     real chord in the key. Loops or truncates to ``bars`` chords. Returns a list
     of chord symbols (e.g. ['Am7', 'Dm7', 'G7', 'Cmaj7']).
     """
+    if max(1, int(bars)) > 4000:
+        raise ValueError("Progression exceeds the 4000-chord limit")
     pattern = _resolve_genre(genre)
     root = _parse_note_name(key)
     intervals = _scale_intervals(scale)
@@ -647,7 +661,6 @@ def progression_for_genre(genre, key="C", scale="minor", bars=4):
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_euclidean_drums(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     instrument: str = "kick",
@@ -668,6 +681,8 @@ def generate_euclidean_drums(
     many steps. instrument: a drum-map name (kick/snare/chat/ohat/clap/ride/...) or
     a raw MIDI number. `humanize` is max +/- velocity jitter.
     """
+    if max(1, bars) * steps > 32000:
+        raise ValueError("Euclidean generation exceeds the 32000-step work limit")
     pattern = euclidean(pulses, steps, rotate)
     pitch = DRUM_MAP.get(instrument.strip().lower())
     if pitch is None:
@@ -691,7 +706,6 @@ def generate_euclidean_drums(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_voiced_progression(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     progression: str,
@@ -730,7 +744,6 @@ def generate_voiced_progression(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_melody(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     progression: str,
@@ -775,7 +788,6 @@ def generate_melody(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_walking_bass(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     progression: str,
@@ -814,7 +826,6 @@ def generate_walking_bass(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_groove(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     style: str = "lofi",
@@ -847,7 +858,6 @@ def generate_groove(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def generate_genre_progression(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     genre: str,
@@ -886,13 +896,12 @@ def generate_genre_progression(
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def humanize_clip(
-    ctx: Context,
     track_index: int,
     clip_index: int,
     timing: float = 0.02,
     velocity: int = 8,
     seed: int | None = None,
-) -> str:
+) -> dict:
     """Read a MIDI clip, apply timing + velocity humanization, and write it back.
     REPLACES the clip's notes with the jittered version.
 
@@ -917,8 +926,7 @@ def humanize_clip(
     if not src:
         return f"No notes to humanize in track {track_index} slot {clip_index}"
     jittered = humanize(src, timing=timing, velocity=velocity, seed=seed)
-    conn.send_command(
+    return conn.send_command(
         "add_notes_to_clip",
         {"track_index": track_index, "clip_index": clip_index, "notes": jittered},
     )
-    return f"Humanized {len(jittered)} notes (timing +/-{timing}, velocity +/-{velocity}) in track {track_index} slot {clip_index}"

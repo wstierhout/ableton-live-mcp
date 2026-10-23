@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — reliability and performance
+
+- Validate complete note/automation payloads before deleting content, including
+  legacy note replacement. Browser failures stop batches and expose partial edits.
+- Simplify browser listings and bound URI lookup/cache work. Selected tool groups
+  no longer expose imported generator tools. Device categories use Live's enum.
+- Preserve duplicate track names in saved-set diffs; reject malformed bridge replies
+  without retrying. Full clip reads and saved-track MIDI exports fail above 32,000 notes.
+- Remove unused tool contexts, duplicate error wrappers and repeated JSON conversion;
+  structured results retain bridge IDs/readbacks while MCP text output remains available.
+- Feed XML incrementally to the existing parser, avoiding an oversized read allocation.
+  Share audio report helpers and label meter/music suggestions without mastering claims.
+- Batch public/wire argument normalization, bounded static preflight before
+  edits, explicit unsupported operations, and structured partial-result errors.
+- Later-tick transport/locator readback, monotonic socket deadlines, truthful
+  queued/running timeout states, bounded operation receipts, and scoped stable
+  track guards. Reusing a retained operation ID does not repeat its edit.
+- Rack-chain parameter setters now accept the same display units and enum labels
+  as top-level setters, while numbers retain their native-value semantics.
+- Bounded worker execution keeps MCP requests responsive. Complete edit workflows
+  are serialized; recording cancellation runs identity-checked cleanup. Replies
+  preserve text and expose structured data/errors. Bridge capabilities distinguish
+  older installed scripts without blocking offline tools.
+- Optional native PCM and decoded-float statistics, with a Python fallback and
+  platform-wheel CI. No assembly, runtime dependency changes, or uv removal.
+- Bounded bulk Session-note reads, browser scan budgets with partial-coverage
+  reporting, pre-allocation MIDI generation limits, and a stat-validated,
+  size-bounded ALS cache. Summary tools skip note-dictionary materialization.
+- Audit fixes: reject loop-wrapping captures before editing, retry owned playback
+  recovery after lost acknowledgements, report recovery state, and preserve user
+  seeks. Started edit workflows finish through cancellation; shutdown joins
+  workers and startup connection attempts before disconnecting.
+- Decoder subprocesses use isolated imports and an absolute trusted worker path;
+  CLI/decoder imports avoid the MCP stack. Benchmarks now include full worker startup.
+- Browser scans visit roots fairly across Live ticks; Session-note reads also
+  continue across ticks. Setup/recipe callers surface incomplete browser coverage.
+- Mutation-only receipts survive read polling, canceled queued operations can be
+  safely resubmitted, and failed oversized receipts retain a truthful status.
+  Bounded receipt sizing avoids JSON serialization on Live's main thread. Embedded
+  runtimes without SHA-256 retain conservative duplicate protection.
+- Restore empty setup, numeric-string rack values, empty browser queries, larger
+  result limits, and Session-key reads on older bridges. Failed display readback
+  reports a warning after a successful rack write. Capability snapshots are locked;
+  track identity matching uses a fast path for stable or hashable Live proxies.
+- Remove duplicate structured-message payloads. Build/test a universal Python
+  fallback wheel alongside native wheels and track C source changes in uv's cache.
+- Validation uses delayed Live simulations and local fixtures; disposable-set
+  smoke checks in Live 11/12 and cross-platform wheel CI remain release gates.
+
 ## 1.8.1 — 2026-09-16
 
 - Live 11: the Remote Script no longer logs `Server accept error: timed out` every

@@ -162,8 +162,38 @@ Unset loads everything.
   few without touching the rest.
 - Placing a session clip into the arrangement overwrites whatever is under it, which
   is also how you replace a section.
-- Transport replies report the state before the command ran. Confirm with
-  `get_session_info`.
+- Start, stop and seek replies include `requested`, `observed`, and `confirmed` after a
+  later Live tick. Continue dependent work only when `confirmed=true`.
+- Batches preflight all commands before editing, contain at most 128 commands,
+  and stop on runtime errors with completed-step details. They do not roll back
+  automatically. Transport, locators, save, undo/redo, deferred scans and composite
+  tools require standalone calls. Locators require stopped playback for exact placement.
+- Tool replies retain text and expose JSON under `structuredContent.data`.
+  Failures have `isError=true` and `structuredContent.error`, including partial
+  results and an operation ID when available. `get_session_info(operation_id=...)`
+  inspects the last 256 mutation receipts; reads do not evict them. An expired
+  receipt is not proof an edit failed.
+- Cancellation prevents edits that have not started. A started multi-command edit
+  finishes its workflow; recording has explicit cancellation and recovery points.
+  Shutdown waits for those workers before closing the connection.
+- `record_section` requires stopped transport and other tracks disarmed. It
+  rejects an Arrangement loop that would wrap during capture. It
+  disarms its own track on completion or cancellation, uses stable track IDs for
+  cleanup, and reports whether transport recovery confirmed a stop. Cleanup does
+  not rewind the playhead, so it preserves intervening user seeks. It is a real-time
+  capture, not a sample-accurate offline render.
+- Browser and Session-note scans continue across Live ticks within bounded
+  budgets. Check `partial` and `limit_reasons` before treating a missing match or
+  key estimate as complete coverage.
+
+The reliability updates require bridge protocol 2. After updating the server,
+run `ableton-live-mcp install` (review `--replace` when the installer reports a
+different existing script) and restart/reload the Control Surface. `uv` remains
+the installation and launch tool. Audio calculations use an optional native
+module supplied in platform wheels; a universal Python wheel provides a
+compiler-free fallback where no native wheel matches. Source builds can select
+that fallback with `ABLETON_MCP_PURE_PYTHON=1`. The Live-side Remote Script remains
+Python 3.7 compatible.
 
 ## Troubleshooting
 

@@ -8,9 +8,6 @@ diff two versioned ``_vN.als`` files, or lint a set for unfinished work with Liv
 closed. Treat results as a summary, not a faithful round-trip of the project.
 """
 
-import json
-
-from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
@@ -35,33 +32,30 @@ def _track_brief(t):
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_summary(ctx: Context, path: str) -> str:
+def als_summary(path: str, refresh: bool = False) -> dict:
     """Summarize a saved .als file WITHOUT Live running: version/creator, tempo,
     time signature, and each track's kind, name, mute/solo, device names, clip
     count, and note count. `path` is a filesystem path to a .als file."""
-    data, err = _load(path)
+    data, err = _load(path, include_notes=False, refresh=refresh)
     if err:
         raise ValueError(err)
-    return json.dumps(
-        {
-            "path": data["path"],
-            "creator": data["creator"],
-            "live_version": data["minor_version"],
-            "tempo": data["tempo"],
-            "time_signature": data["time_signature"],
-            "track_count": len(data["tracks"]),
-            "scene_count": len(data["scenes"]),
-            "tracks": [_track_brief(t) for t in data["tracks"]],
-        },
-        indent=2,
-    )
+    return {
+        "path": data["path"],
+        "creator": data["creator"],
+        "live_version": data["minor_version"],
+        "tempo": data["tempo"],
+        "time_signature": data["time_signature"],
+        "track_count": len(data["tracks"]),
+        "scene_count": len(data["scenes"]),
+        "tracks": [_track_brief(t) for t in data["tracks"]],
+    }
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_list_tracks(ctx: Context, path: str) -> str:
+def als_list_tracks(path: str) -> dict:
     """List every track in a saved .als file with its clips (name, MIDI/audio,
     start, length, looping, sample path, note count). No Live required."""
-    data, err = _load(path)
+    data, err = _load(path, include_notes=False)
     if err:
         raise ValueError(err)
     tracks = []
@@ -83,14 +77,15 @@ def als_list_tracks(ctx: Context, path: str) -> str:
             for c in t["clips"]
         ]
         tracks.append(entry)
-    return json.dumps({"path": data["path"], "tracks": tracks}, indent=2)
+    return {"path": data["path"], "tracks": tracks}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_extract_midi(ctx: Context, path: str, track_index: int) -> str:
+def als_extract_midi(path: str, track_index: int) -> dict:
     """Extract MIDI notes from a track in a saved .als file, as
     {pitch,start,duration,velocity} dicts per clip. `track_index` is the track's
-    position in the set (see als_summary). No Live required."""
+    position in the set (see als_summary). Exports at most 32,000 notes;
+    larger tracks fail explicitly. No Live required."""
     data, err = _load(path)
     if err:
         raise ValueError(err)
@@ -99,24 +94,26 @@ def als_extract_midi(ctx: Context, path: str, track_index: int) -> str:
         raise ValueError(
             f"No track at index {track_index}; the set has {len(data['tracks'])} tracks."
         )
+    if match["note_count"] > 32000:
+        raise ValueError("Track exceeds the 32000-note export limit; use a smaller saved track")
     clips = [
         {"name": c["name"], "start": c["start"], "length": c["length"], "notes": c["notes"]}
         for c in match["clips"]
         if c["is_midi"]
     ]
-    return json.dumps({"track": match["name"], "clips": clips}, indent=2)
+    return {"track": match["name"], "clips": clips}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_diff(ctx: Context, path_a: str, path_b: str) -> str:
+def als_diff(path_a: str, path_b: str) -> dict:
     """Diff two saved .als files (e.g. song_v4.als vs song_v5.als) offline:
-    tempo/time-signature changes, tracks added/removed by name, and per-track
-    deltas in device chain, clip count, note count, and mute state. Great for
-    logging what changed between versions."""
-    a, err_a = _load(path_a)
+    tempo/time-signature changes, tracks added/removed, and per-track deltas.
+    Tracks match by literal name and occurrence in track order, not stable ID;
+    reordering or renaming same-named tracks can make the comparison ambiguous."""
+    a, err_a = _load(path_a, include_notes=False)
     if err_a:
         raise ValueError(err_a)
-    b, err_b = _load(path_b)
+    b, err_b = _load(path_b, include_notes=False)
     if err_b:
         raise ValueError(err_b)
 
@@ -128,11 +125,24 @@ def als_diff(ctx: Context, path_a: str, path_b: str) -> str:
 
     by_name_a = _keyed_by_name(a["tracks"])
     by_name_b = _keyed_by_name(b["tracks"])
-    changes["tracks_added"] = [n for n in by_name_b if n not in by_name_a]
-    changes["tracks_removed"] = [n for n in by_name_a if n not in by_name_b]
+    labels = {key: key[0] for key in by_name_a | by_name_b if key[1] == 1}
+    used = set(labels.values())
+    for key in by_name_a | by_name_b:
+        if key not in labels:
+            suffix = key[1]
+            label = f"{key[0]} #{suffix}"
+            while label in used:
+                suffix += 1
+                label = f"{key[0]} #{suffix}"
+            labels[key] = label
+            used.add(label)
+    changes["tracks_added"] = [labels[n] for n in by_name_b if n not in by_name_a]
+    changes["tracks_removed"] = [labels[n] for n in by_name_a if n not in by_name_b]
 
     modified = []
-    for name in by_name_a.keys() & by_name_b.keys():
+    for name in by_name_a:
+        if name not in by_name_b:
+            continue
         ta, tb = by_name_a[name], by_name_b[name]
         delta = {}
         da = [d["name"] for d in ta["devices"]]
@@ -150,19 +160,28 @@ def als_diff(ctx: Context, path_a: str, path_b: str) -> str:
             if va != vb and not (va is None and vb is None):
                 delta[field] = {"from": va, "to": vb}
         if delta:
-            modified.append({"track": name, **delta})
+            modified.append(
+                {
+                    "track": labels[name],
+                    "name": name[0],
+                    "occurrence": name[1],
+                    "index_a": ta["index"],
+                    "index_b": tb["index"],
+                    **delta,
+                }
+            )
     changes["tracks_modified"] = modified
     if a.get("locators") != b.get("locators"):
         changes["locators"] = {"from": a.get("locators"), "to": b.get("locators")}
-    return json.dumps({"a": path_a, "b": path_b, "changes": changes}, indent=2)
+    return {"a": path_a, "b": path_b, "changes": changes}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_details(ctx: Context, path: str) -> str:
+def als_details(path: str) -> dict:
     """Read mixing and arrangement detail from a saved .als, offline: the set's
     locators (name + beat time) and each track's fader volume, pan, and number of
     automation lanes. Complements als_summary for reviewing a mix without Live."""
-    data, err = _load(path)
+    data, err = _load(path, include_notes=False)
     if err:
         raise ValueError(err)
     tracks = [
@@ -175,18 +194,16 @@ def als_details(ctx: Context, path: str) -> str:
         }
         for t in data["tracks"]
     ]
-    return json.dumps(
-        {"path": data["path"], "locators": data["locators"], "tracks": tracks}, indent=2
-    )
+    return {"path": data["path"], "locators": data["locators"], "tracks": tracks}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def als_find_unfinished(ctx: Context, path: str) -> str:
-    """Lint a saved .als for likely-unfinished work, offline: no master
-    limiter/compressor, MIDI track with no instrument, MIDI clip with no notes,
-    empty audio track, or muted tracks. Returns machine-readable issues so an
-    agent can decide what to fix before rendering."""
-    data, err = _load(path)
+def als_find_unfinished(path: str) -> dict:
+    """Suggest saved-set details to review: unrecognized master dynamics, empty
+    MIDI device chains/clips, empty audio tracks and muted tracks. These are
+    observations, not faults or a completeness score; external MIDI routing,
+    third-party mastering and intentional silence are not evaluated."""
+    data, err = _load(path, include_notes=False)
     if err:
         raise ValueError(err)
     issues = []
@@ -199,8 +216,9 @@ def als_find_unfinished(ctx: Context, path: str) -> str:
         issues.append(
             {
                 "code": "no_master_dynamics",
-                "severity": "warn",
-                "message": "Master has no limiter or compressor.",
+                "severity": "info",
+                "message": "No master dynamics recognized by device name; dynamics may be "
+                "unneeded or provided by a plugin with a different name.",
             }
         )
 
@@ -209,9 +227,10 @@ def als_find_unfinished(ctx: Context, path: str) -> str:
             issues.append(
                 {
                     "code": "midi_no_instrument",
-                    "severity": "warn",
+                    "severity": "info",
                     "track": t["name"],
-                    "message": f"MIDI track '{t['name']}' has no instrument device.",
+                    "message": f"MIDI track '{t['name']}' has no devices; "
+                    "it may intentionally route MIDI elsewhere.",
                 }
             )
         if t["kind"] == "midi":
@@ -244,6 +263,4 @@ def als_find_unfinished(ctx: Context, path: str) -> str:
                 }
             )
 
-    return json.dumps(
-        {"path": data["path"], "issue_count": len(issues), "issues": issues}, indent=2
-    )
+    return {"path": data["path"], "issue_count": len(issues), "issues": issues}

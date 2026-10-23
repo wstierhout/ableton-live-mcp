@@ -29,16 +29,22 @@ def load_gz_xml(path, noun=".als"):
     if not os.path.isfile(path):
         return None, path, f"No file at {path}. Pass the full path to a {noun} file."
     try:
+        parser = ET.XMLParser()
+        size = 0
         with gzip.open(path, "rb") as f:
-            data = f.read(MAX_XML_BYTES + 1)
-        if len(data) > MAX_XML_BYTES:
+            while chunk := f.read(min(65536, MAX_XML_BYTES + 1 - size)):
+                size += len(chunk)
+                if size > MAX_XML_BYTES:
+                    break
+                parser.feed(chunk)
+        if size > MAX_XML_BYTES:
             return (
                 None,
                 path,
                 f"{path} decompresses past {MAX_XML_BYTES // (1024 * 1024)} MB; "
                 f"refusing to parse it (corrupt or not a real {noun} file).",
             )
-        root = ET.fromstring(data)
+        root = parser.close()
     except (gzip.BadGzipFile, EOFError, zlib.error):
         return None, path, f"{path} is not a valid gzip-compressed {noun} file."
     except ET.ParseError as e:

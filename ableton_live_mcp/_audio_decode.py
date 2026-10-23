@@ -1,31 +1,19 @@
 """Local audio decoder worker, kept separate from MCP startup and time-limited by its caller."""
 
-import array
 import json
 import math
 import re
 import sys
 from pathlib import Path
 
-FORMATS = {
-    ".wav": "wav",
-    ".wave": "wav",
-    ".aif": "aiff",
-    ".aiff": "aiff",
-    ".aifc": "aiff",
-    ".flac": "flac",
-    ".ogg": "ogg",
-    ".oga": "ogg",
-    ".mp3": "mp3",
-    ".aac": "aac",
-    ".m4a": "mov",
-    ".mp4": "mov",
-}
+# Direct workers run with -I, which excludes cwd, PYTHONPATH and the script
+# directory. Add only this installed package's trusted parent, never media paths.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ableton_live_mcp.audio_stats import FORMATS, channel_metrics, float_stats  # noqa: E402
+
 MAX_SAMPLES = 32_000_000
-
-
-def _db(value):
-    return round(20 * math.log10(value), 4) if value else None
 
 
 def decode_and_measure(path, max_seconds):
@@ -83,14 +71,13 @@ def decode_and_measure(path, max_seconds):
             for decoded in converter.resample(frame):
                 take = min(decoded.samples, limit - count)
                 for channel, plane in enumerate(decoded.planes):
-                    values = array.array("d")
-                    values.frombytes(bytes(plane)[: take * 8])
-                    if any(not math.isfinite(v) for v in values):
-                        raise ValueError("Audio contains NaN or infinite samples")
-                    peak[channel] = max(peak[channel], max(map(abs, values), default=0))
-                    sums[channel] += math.fsum(values)
-                    square[channel] += math.fsum(v * v for v in values)
-                    full_scale[channel] += sum(abs(v) >= 1.0 for v in values)
+                    block_peak, block_square, block_sum, block_full = float_stats(
+                        bytes(plane), take
+                    )
+                    peak[channel] = max(peak[channel], block_peak)
+                    sums[channel] += block_sum
+                    square[channel] += block_square
+                    full_scale[channel] += block_full
                 count += take
                 if take < decoded.samples:
                     partial = True
@@ -99,19 +86,6 @@ def decode_and_measure(path, max_seconds):
                 break
         if not count:
             raise ValueError("No audio frames to measure")
-        metrics = []
-        for channel in range(channels):
-            rms = math.sqrt(square[channel] / count)
-            metrics.append(
-                {
-                    "channel": channel,
-                    "sample_peak_dbfs": _db(peak[channel]),
-                    "rms_dbfs": _db(rms),
-                    "dc_offset": sums[channel] / count,
-                    "full_scale_samples": int(full_scale[channel]),
-                    "crest_factor_db": _db(peak[channel] / rms) if rms else None,
-                }
-            )
         return {
             "evidence": "measured_decoded_audio",
             "codec": codec,
@@ -126,7 +100,7 @@ def decode_and_measure(path, max_seconds):
             "limit_reason": ("sample_budget" if limit < requested else "max_seconds")
             if partial
             else None,
-            "channels": metrics,
+            "channels": channel_metrics(count, peak, square, sums, full_scale),
             "limitations": "Decoded samples at original rate and channel layout; no normalization. "
             "First audio stream only. Lossy decoding cannot recover the original signal. "
             "Sample peak is not true peak; RMS is not LUFS. Full-scale samples count decoded "

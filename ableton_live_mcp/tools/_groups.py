@@ -6,6 +6,8 @@ domain covers the basic, advanced, and motif generators). Both the module loader
 so adding a module means editing one place and the two stay in sync.
 """
 
+import os
+
 # group -> the tool modules that implement it.
 GROUP_MODULES = {
     "session": ["session"],
@@ -21,6 +23,24 @@ GROUP_MODULES = {
     "recipes": ["recipes"],
     "prompts": ["prompts"],
 }
+
+_requested = os.environ.get("ABLETON_TOOLSETS", "").strip()
+ENABLED_GROUPS = (
+    list(dict.fromkeys(g.strip() for g in _requested.split(",") if g.strip()))
+    if _requested and _requested.lower() != "all"
+    else list(GROUP_MODULES)
+)
+_unknown = [g for g in ENABLED_GROUPS if g not in GROUP_MODULES]
+if _unknown:
+    raise ValueError(
+        f"Unknown ABLETON_TOOLSETS: {_unknown}. Valid groups: "
+        f"{[g for g in GROUP_MODULES if g != 'prompts']}"
+    )
+if "prompts" not in ENABLED_GROUPS:
+    ENABLED_GROUPS.append("prompts")
+ENABLED_MODULES = tuple(
+    dict.fromkeys(module for group in ENABLED_GROUPS for module in GROUP_MODULES[group])
+)
 
 # group -> one-line summary for agent orientation (describe_capabilities).
 GROUP_DESCRIPTIONS = {

@@ -1,0 +1,50 @@
+name: Native audio wheels
+
+on:
+  workflow_call:
+
+jobs:
+  wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and test platform wheels
+        uses: pypa/cibuildwheel@v4.2.1
+        env:
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
+          CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
+          CIBW_ARCHS: auto64
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: >-
+            python -c "import ableton_live_mcp._audio_native" &&
+            python -m pytest {project}/tests/test_audio_native.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ableton-wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.13"
+      - name: Build compiler-free fallback wheel
+        run: uv build --wheel --out-dir wheelhouse
+        env:
+          ABLETON_MCP_PURE_PYTHON: "1"
+      - name: Test installed fallback, outside editable imports
+        run: |
+          uv venv .wheel-test --python 3.13
+          uv pip install --python .wheel-test/bin/python wheelhouse/*-py3-none-any.whl pytest
+          .wheel-test/bin/python -I -c "from ableton_live_mcp.audio_stats import NATIVE_AUDIO; assert not NATIVE_AUDIO"
+          .wheel-test/bin/python -I -m pytest --import-mode=importlib tests/test_audio_formats.py tests/test_release_features.py tests/test_worker_isolation.py -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ableton-wheels-python
+          path: wheelhouse/*-py3-none-any.whl

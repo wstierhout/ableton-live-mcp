@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  wheels:
+    uses: ./.github/workflows/wheels.yml
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -15,9 +18,10 @@ jobs:
       - run: uv run --frozen --extra dev ruff format --check .
       - run: python3 -m py_compile ableton_live_mcp/remote_script/__init__.py
       - run: uv run --frozen --extra dev pytest -q
+      - run: uv run --frozen python scripts/export_tool_catalog.py --check
 
   publish:
-    needs: test
+    needs: [test, wheels]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -25,7 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv build
+      - run: uv build --sdist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ableton-wheels-*
+          path: dist
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   registry:

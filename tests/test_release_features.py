@@ -1,31 +1,14 @@
-import ast
 import math
-import os
-import re
 import wave
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from ableton_live_mcp.tools.audio_analysis import measure_wav
 
-SOURCE = (Path(__file__).parents[1] / "ableton_live_mcp/remote_script/__init__.py").read_text()
-TREE = ast.parse(SOURCE)
-HELPERS = ast.Module(
-    body=[
-        n
-        for n in TREE.body
-        if isinstance(n, ast.FunctionDef) and n.name in {"_display_number", "_parameter_value"}
-    ],
-    type_ignores=[],
-)
-NAMESPACE = {"math": math, "re": re}
-exec(compile(HELPERS, "parameter_helpers", "exec"), NAMESPACE)
-resolve = NAMESPACE["_parameter_value"]
 
-
-def test_display_mapping_is_read_only_and_handles_logarithmic_hz():
+def test_display_mapping_is_read_only_and_handles_logarithmic_hz(bridge_module):
+    resolve = bridge_module._parameter_value
     param = SimpleNamespace(
         min=0, max=1, is_quantized=False, str_for_value=lambda x: f"{20 * 1000**x} Hz"
     )
@@ -37,7 +20,8 @@ def test_display_mapping_is_read_only_and_handles_logarithmic_hz():
             resolve(param, bad)
 
 
-def test_native_clamping_and_enum_labels():
+def test_native_clamping_and_enum_labels(bridge_module):
+    resolve = bridge_module._parameter_value
     p = SimpleNamespace(
         min=0, max=2, is_quantized=True, str_for_value=lambda x: ["Off", "Sync", "Auto"][int(x)]
     )
@@ -48,7 +32,8 @@ def test_native_clamping_and_enum_labels():
         resolve(p, "missing")
 
 
-def test_ambiguous_mapping_rejected():
+def test_ambiguous_mapping_rejected(bridge_module):
+    resolve = bridge_module._parameter_value
     p = SimpleNamespace(
         min=0, max=1, is_quantized=False, str_for_value=lambda x: f"{math.sin(x * 6.28)} Hz"
     )
@@ -89,30 +74,23 @@ def test_wav_silence_and_limits(tmp_path):
             measure_wav(path, duration)
 
 
-def test_simpler_gate_and_requested_file_are_checked_before_writing(tmp_path):
-    cls = next(n for n in TREE.body if isinstance(n, ast.ClassDef) and n.name == "AbletonMCP")
-    method = next(
-        n
-        for n in cls.body
-        if isinstance(n, ast.FunctionDef) and n.name == "_replace_simpler_sample"
-    )
-    namespace = {"os": os}
-    exec(compile(ast.Module(body=[method], type_ignores=[]), "simpler", "exec"), namespace)
-    replace = namespace[method.name]
+def test_simpler_gate_and_requested_file_are_checked_before_writing(tmp_path, bridge):
+    replace = bridge._replace_simpler_sample
     calls = []
     device = SimpleNamespace(
         name="Simpler",
         replace_sample=calls.append,
         sample=SimpleNamespace(file_path="readback.wav"),
     )
-    bridge = SimpleNamespace(_get_device=lambda *a: device, _live_version=lambda: "12.3.0")
+    bridge._get_device = lambda *a: device
+    bridge._live_version = lambda: "12.3.0"
     path = tmp_path / "sample.wav"
     path.write_bytes(b"test fixture; validation of audio format belongs to Live")
     with pytest.raises(ValueError, match="12.4"):
-        replace(bridge, 0, 0, str(path))
+        replace(0, 0, str(path))
     bridge._live_version = lambda: "12.4.5"
     with pytest.raises(ValueError, match="absolute"):
-        replace(bridge, 0, 0, "relative.wav")
+        replace(0, 0, "relative.wav")
     assert not calls
-    result = replace(bridge, 0, 0, str(path))
+    result = replace(0, 0, str(path))
     assert calls == [str(path)] and result["loaded_path"] == "readback.wav"

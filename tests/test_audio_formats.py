@@ -11,7 +11,9 @@ from ableton_live_mcp._audio_decode import decode_and_measure
 from ableton_live_mcp.tools.audio_analysis import measure_audio
 
 
-def make_audio(path, container, codec, sample_format, values=(0.25, -0.5), samples=4800):
+def make_audio(
+    path, container, codec, sample_format, values=(0.25, -0.5), samples=4800, tone=False
+):
     with av.open(str(path), "w", format=container) as output:
         stream = output.add_stream(codec, rate=48000)
         if codec == "vorbis":
@@ -24,16 +26,19 @@ def make_audio(path, container, codec, sample_format, values=(0.25, -0.5), sampl
         types = {"flt": "f", "dbl": "d", "s16": "h", "s32": "i"}
         base = fmt.name.rstrip("p")
         code = types[base]
-        data = (
-            values
-            if base in ("flt", "dbl")
-            else tuple(int(v * 2 ** (fmt.bits - 1)) for v in values)
-        )
+        data = [
+            [v * math.sin(2 * math.pi * 440 * i / 48000) if tone else v for i in range(samples)]
+            for v in values
+        ]
+        if base not in ("flt", "dbl"):
+            data = [[int(v * 2 ** (fmt.bits - 1)) for v in channel] for channel in data]
         if fmt.is_planar:
-            for plane, value in zip(frame.planes, data):
-                plane.update(struct.pack("=" + code, value) * samples)
+            for plane, channel in zip(frame.planes, data):
+                plane.update(struct.pack("=" + code * samples, *channel))
         else:
-            frame.planes[0].update(struct.pack("=" + code * 2, *data) * samples)
+            frame.planes[0].update(
+                struct.pack("=" + code * samples * 2, *(v for pair in zip(*data) for v in pair))
+            )
         for packet in stream.encode(frame):
             output.mux(packet)
         for packet in stream.encode(None):
@@ -80,14 +85,19 @@ def test_lossless_formats_and_channels(tmp_path, extension, container, codec, fm
     ],
 )
 def test_compressed_formats_measure_decoded_audio(tmp_path, extension, container, codec, fmt):
-    path = make_audio(tmp_path / f"compressed.{extension}", container, codec, fmt)
+    path = make_audio(
+        tmp_path / f"compressed.{extension}", container, codec, fmt, samples=12000, tone=True
+    )
     result = measure_audio(path)
     assert result["codec"]
     assert result["bit_depth"] is None
     assert not result["partial"]
     assert result["analyzed_seconds"] > 0
     assert len(result["channels"]) == 2
-    assert all(math.isfinite(c["rms_dbfs"]) for c in result["channels"])
+    # A sine's RMS is amplitude/sqrt(2); allow codec padding/loss, not swapped channels.
+    assert [c["rms_dbfs"] for c in result["channels"]] == pytest.approx(
+        [-15.0515, -9.0309], abs=1.5
+    )
     assert "Lossy decoding" in result["limitations"]
 
 
@@ -150,14 +160,15 @@ def test_sample_budget_reports_partial_result(tmp_path, monkeypatch):
     assert result["analyzed_seconds"] == 24 / 48000
 
 
-def test_rate_and_channel_limits_are_enforced_before_decoding(tmp_path):
+@pytest.mark.parametrize("rate,layout,channels", [(48000, "7.1.4", 12), (768000, "stereo", 2)])
+def test_unsupported_rates_and_channel_counts_are_rejected(tmp_path, rate, layout, channels):
     path = tmp_path / "too-many.wav"
     with av.open(str(path), "w", format="wav") as output:
-        stream = output.add_stream("pcm_f32le", rate=48000)
-        stream.layout = "7.1.4"
-        frame = av.AudioFrame(format="flt", layout="7.1.4", samples=48)
-        frame.sample_rate = 48000
-        frame.planes[0].update(bytes(48 * 12 * 4))
+        stream = output.add_stream("pcm_f32le", rate=rate)
+        stream.layout = layout
+        frame = av.AudioFrame(format="flt", layout=layout, samples=48)
+        frame.sample_rate = rate
+        frame.planes[0].update(bytes(48 * channels * 4))
         for packet in stream.encode(frame):
             output.mux(packet)
         for packet in stream.encode(None):

@@ -9,29 +9,11 @@ The `offline` group parses saved .als/.adg files and needs no running Live.
 """
 
 import importlib
-import os
 
-from ._groups import GROUP_MODULES
+from ..app import mcp
+from ._groups import ENABLED_MODULES
 
-_requested = os.environ.get("ABLETON_TOOLSETS", "").strip()
-if _requested and _requested.lower() != "all":
-    _named = [g.strip() for g in _requested.split(",") if g.strip()]
-    _unknown = [g for g in _named if g not in GROUP_MODULES]
-    if _unknown:
-        _valid = [g for g in GROUP_MODULES if g != "prompts"]
-        raise ValueError(f"Unknown ABLETON_TOOLSETS: {_unknown}. Valid groups: {_valid}")
-    _selected = [g for g in _named if g in GROUP_MODULES]
-    if "prompts" not in _selected:
-        _selected.append("prompts")
-else:
-    _selected = list(GROUP_MODULES)
-
-# Flatten selected groups to their modules, de-duplicated, preserving order.
-_modules = []
-for _g in _selected:
-    for _mod in GROUP_MODULES[_g]:
-        if _mod not in _modules:
-            _modules.append(_mod)
-
-for _m in _modules:
+# Dependencies may import unselected tool modules for their pure helpers.
+mcp.enabled_tool_modules = {f"{__name__}.{module}" for module in ENABLED_MODULES}
+for _m in ENABLED_MODULES:
     importlib.import_module(f".{_m}", __name__)

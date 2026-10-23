@@ -51,6 +51,11 @@ def test_doctor_requires_running_and_installed_version_match(tmp_path, monkeypat
     assert cli.doctor(tmp_path, json_output=True) == 1
     capsys.readouterr()
     monkeypatch.setattr(cli, "_probe", lambda: {"tempo": 120, "bridge_version": __version__})
+    assert cli.doctor(tmp_path, json_output=True) == 1
+    capsys.readouterr()
+    monkeypatch.setattr(
+        cli, "_probe", lambda: {"tempo": 120, "bridge_version": __version__, "bridge_protocol": 2}
+    )
     assert cli.doctor(tmp_path, json_output=True) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
     cli._target(tmp_path).write_bytes(b"old script on disk")
