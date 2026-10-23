@@ -44,6 +44,16 @@ def _display_number(text):
     return value, unit
 
 
+def _sampled_display(param, raw):
+    """Display number for one sampled raw value. Range ends shown as '-inf dB' (Utility,
+    mixer-style gains) map to -inf so the rest of the range can still be resolved."""
+    text = str(param.str_for_value(raw))
+    match = re.fullmatch(r"\s*([+-]?)inf\s*(dB)\s*", text, re.I)
+    if match:
+        return (-math.inf if match.group(1) == "-" else math.inf), "db"
+    return _display_number(text)
+
+
 def _parameter_value(param, requested):
     """Resolve display text without speculative writes; reject ambiguous mappings."""
     low, high = float(param.min), float(param.max)
@@ -69,7 +79,7 @@ def _parameter_value(param, requested):
     samples = []
     for i in range(9):
         raw = low + (high - low) * i / 8
-        display, found_unit = _display_number(param.str_for_value(raw))
+        display, found_unit = _sampled_display(param, raw)
         if found_unit != unit:
             raise ValueError("Requested unit does not match this parameter")
         samples.append(display)
@@ -83,7 +93,7 @@ def _parameter_value(param, requested):
     candidates = []
     for _ in range(32):
         raw = (low + high) / 2
-        display, found_unit = _display_number(param.str_for_value(raw))
+        display, found_unit = _sampled_display(param, raw)
         if found_unit != unit:
             raise ValueError("Display unit changes across the range; use a native value")
         candidates.append((abs(display - target), raw))

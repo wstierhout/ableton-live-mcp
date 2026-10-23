@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Display values such as `"-12 dB"` now resolve on parameters whose range ends at
+  `-inf dB` (Utility Gain/Output and similar). Previously the `-inf dB` end of the
+  range made every dB request fail.
+
 ## 1.8.1 — 2026-09-16
 
 - Live 11: the Remote Script no longer logs `Server accept error: timed out` every

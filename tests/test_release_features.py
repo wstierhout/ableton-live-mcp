@@ -16,7 +16,8 @@ HELPERS = ast.Module(
     body=[
         n
         for n in TREE.body
-        if isinstance(n, ast.FunctionDef) and n.name in {"_display_number", "_parameter_value"}
+        if isinstance(n, ast.FunctionDef)
+        and n.name in {"_display_number", "_sampled_display", "_parameter_value"}
     ],
     type_ignores=[],
 )
@@ -54,6 +55,19 @@ def test_ambiguous_mapping_rejected():
     )
     with pytest.raises(ValueError):
         resolve(p, "0.2 Hz")
+
+
+def test_db_display_resolves_when_the_range_starts_at_minus_inf():
+    # Utility Gain/Output and similar parameters read "-inf dB" at the bottom of the range.
+    p = SimpleNamespace(
+        min=-1,
+        max=1,
+        is_quantized=False,
+        str_for_value=lambda x: "-inf dB" if x <= -1 else f"{x * 35:.2f} dB",
+    )
+    value, warning = resolve(p, "-12 dB")
+    assert value == pytest.approx(-12 / 35, abs=1e-3)
+    assert warning
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 4])
