@@ -562,3 +562,92 @@ def test_batch_beat_zero_write_fails_preflight_before_other_commands(bridge, aut
     assert automation.envelope.steps == [(0.0, 4.0, 0.5)]
     assert automation.events == []
     assert bridge.edits == []
+
+
+@pytest.mark.parametrize("mode", ["points", "ramp"])
+def test_command_reply_deadline_bounds_deferred_automation_and_retains_its_failure(
+    bridge, bridge_module, automation, monkeypatch, mode
+):
+    clock = [0.0]
+    monkeypatch.setattr(bridge_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    bridge._COMMAND_TIMEOUTS = {"write_automation": 1.0}
+    schedule = bridge.schedule_message
+
+    def schedule_message(delay, callback):
+        def after_live_update():
+            if delay > 0:
+                # The command has one second total. This callback resumes
+                # before the local two-second limit but after its reply budget.
+                clock[0] = 1.1
+            callback()
+
+        schedule(delay, after_live_update)
+
+    bridge.schedule_message = schedule_message
+    operation_id = "reply-deadline-after-seed-" + mode
+    reply = bridge.dispatch(
+        {
+            "type": "write_automation",
+            "operation_id": operation_id,
+            "params": {
+                **TARGET,
+                "mode": mode,
+                "points": [{"time": 0, "value": 0.2}, {"time": 1, "value": 0.8}],
+            },
+        }
+    )
+    assert reply["status"] == "error", reply
+    assert reply["details"]["may_have_applied"] is True
+    assert reply["details"]["envelope_replaced"] is False
+    assert automation.parameter.value == 0.2
+    assert automation.envelope.steps == [(0.0, 4.0, 0.5)]
+    assert not any(event[0] in {"clear", "create", "insert"} for event in automation.events)
+    assert bridge.edits == ["begin", "end"]
+    assert bridge.pending == []
+    receipt = bridge._get_operation_status(operation_id)
+    assert receipt["state"] == "failed"
+    assert receipt["response"] == reply
+    assert getattr(bridge, "_command_deadline", None) is None
+
+
+@pytest.mark.parametrize("mode", ["points", "ramp"])
+def test_expired_command_context_rejects_before_seed_and_retains_a_no_edit_failure(
+    bridge, bridge_module, automation, monkeypatch, mode
+):
+    clock = [0.0]
+    monkeypatch.setattr(bridge_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    bridge._COMMAND_TIMEOUTS = {"write_automation": 1.0}
+    schedule = bridge.schedule_message
+
+    def schedule_message(delay, callback):
+        def after_queue_delay():
+            clock[0] = 1.1
+            callback()
+
+        schedule(delay, after_queue_delay)
+
+    bridge.schedule_message = schedule_message
+    operation_id = "reply-deadline-before-seed-" + mode
+    reply = bridge.dispatch(
+        {
+            "type": "write_automation",
+            "operation_id": operation_id,
+            "params": {
+                **TARGET,
+                "mode": mode,
+                "points": [{"time": 0, "value": 0.2}, {"time": 1, "value": 0.8}],
+            },
+        }
+    )
+    assert reply["status"] == "error", reply
+    assert reply["details"]["may_have_applied"] is False
+    assert reply["details"]["envelope_replaced"] is False
+    assert automation.parameter.value == 0.25
+    assert automation.envelope.steps == [(0.0, 4.0, 0.5)]
+    assert not any(event[0] in {"clear", "create", "insert", "seed"} for event in automation.events)
+    assert bridge.edits == []
+    assert bridge.pending == []
+    receipt = bridge._get_operation_status(operation_id)
+    assert receipt["state"] == "failed"
+    assert receipt["response"] == reply
+    assert getattr(bridge, "_command_deadline", None) is None

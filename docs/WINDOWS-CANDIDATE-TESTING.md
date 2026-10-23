@@ -209,14 +209,19 @@ verified source archive. No Python code needs to be copied from this guide. The
 runner starts the installed server through the MCP Python SDK. This is deliberately
 separate from the offline PowerShell verifier: it edits the disposable set.
 Start with `inventory`; then run the remaining cases separately, retaining each
-log. Do not operate another MCP client against Live during these runs.
+log. Reopen the saved pristine fixture before **each** case: the automation
+cases create a clip and leave an envelope. Do not operate another MCP client
+against Live during these runs.
 
 Run from the artifact directory, using the installed environment:
 
 ```powershell
 & $Py -I "$Root\source\scripts\test-live-candidate.py" inventory 2>&1 | Tee-Object "$Root\evidence-python\inventory.log"
 & $Py -I "$Root\source\scripts\test-live-candidate.py" parameters 2>&1 | Tee-Object "$Root\evidence-python\parameters.log"
+# Reopen the saved pristine fixture before each following case.
 & $Py -I "$Root\source\scripts\test-live-candidate.py" automation 2>&1 | Tee-Object "$Root\evidence-python\automation.log"
+# Reopen it again: beat-zero POINTS acceptance needs a separate fresh clip.
+& $Py -I "$Root\source\scripts\test-live-candidate.py" automation-points-zero 2>&1 | Tee-Object "$Root\evidence-python\automation-points-zero.log"
 & $Py -I "$Root\source\scripts\test-live-candidate.py" batch 2>&1 | Tee-Object "$Root\evidence-python\batch.log"
 & $Py -I "$Root\source\scripts\test-live-candidate.py" cancel 2>&1 | Tee-Object "$Root\evidence-python\cancel.log"
 ```
@@ -237,12 +242,22 @@ it to settle before writing their envelope. This changes the stopped/manual
 value as well as the envelope. Their results record `prior_value`,
 `automation_state` and `start_settled`; retain those complete replies. A write
 with active or overridden automation is refused before seeding or clearing.
-The runner checks the actual state again before replacing the points envelope
-with the ramp. If Live keeps that state nonzero, report this part **blocked**.
-Inspect the Session/Arrangement automation and stopped clips in Live; stopping,
-unlinking or re-enabling automation may be necessary, but do not remove the
-guard or call a rejected write a pass. The automated tests simulate Live and do
-not establish this actual Live behavior.
+The `automation` case writes the beat-zero ramp first on a fresh, inactive
+parameter, verifies the sampled staircase, and checks that one Undo restores
+both its previous manual value and missing envelope. Redo restores the ramp.
+It then replaces that ramp with points starting at beat **0.25**, which avoids
+seeding and is permitted over active automation. Explicit positive durations,
+invalid-request preservation and another Undo/Redo are checked against the
+correct ramp/points snapshots.
+
+The separate `automation-points-zero` case must run after reopening the pristine
+fixture. It checks beat-zero **points** mode, its sampled values and the same
+single-Undo recovery of the prior manual value and missing envelope. It does
+not silently omit points-mode beat-zero coverage. If the initial fixture state
+is nonzero, report the case **blocked**. Inspect stopped clips and the
+Session/Arrangement automation in Live; stopping, unlinking or re-enabling
+may be necessary, but do not remove the guard or call a rejected write a pass.
+The automated tests simulate Live and do not establish this actual Live behavior.
 
 Batch preflight rejects **all beat-zero envelope writes**, including points
 and ramps, because they require a wait across Live ticks. Use standalone calls
@@ -267,9 +282,11 @@ Keep screenshots and a short written result for these observations:
   The ramp has visible finite-width stairs, reaches the final value, and holds it
   through the end. Readback samples around boundaries use epsilon beats to avoid
   confusing an exact event boundary with a vanished zero-duration segment.
-- One Undo after the ramp restores the previous step envelope; Redo restores the
-  ramp. There must be no unrelated note/clip loss. The batch's single Undo restores
-  both its name and pan, while its runtime failure reports the completed first edit.
+- On each fresh beat-zero case, one Undo removes the new envelope and restores
+  the prior manual value; Redo restores it. In `automation`, the later points
+  replacement's Undo restores the ramp and Redo restores the points. There must
+  be no unrelated note/clip loss. The batch's single Undo restores both its name
+  and pan, while its runtime failure reports the completed first edit.
 - During cancellation, recording starts before cancellation is sent; afterwards
   transport is stopped, Arrangement recording is off, no track remains armed,
   the owned temporary Bounce track is removed, and original tracks survive.

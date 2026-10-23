@@ -67,12 +67,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Portable wheel installation failed' }
           uv pip check --python $Python
           if ($LASTEXITCODE -ne 0) { throw 'Installed dependency check failed' }
-      - name: Verify Windows installed package without Live
+      - name: Verify Windows installed package and temporary bridge without Live
         shell: pwsh
         run: |
           $Python = Join-Path $PWD '.installed-wheel\Scripts\python.exe'
+          $Library = Join-Path $env:RUNNER_TEMP 'ableton-test-user-library'
+          New-Item -ItemType Directory -Path $Library -Force | Out-Null
+          & $Python -I -m ableton_live_mcp.server install --user-library $Library
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary bridge installation failed' }
+          $Evidence = Join-Path $env:RUNNER_TEMP 'ableton-windows-python-evidence'
           .\scripts\test-windows-candidate.ps1 -Python $Python -ExpectedAudio Python `
-            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'ableton-windows-python-evidence')
+            -UserLibrary $Library -OutputDirectory $Evidence
+          $Report = Get-Content -LiteralPath (Join-Path $Evidence 'environment.json') -Raw | ConvertFrom-Json
+          if (-not $Report.checks.live_connection_blocked) { throw 'Missing network-block evidence' }
+          if (-not $Report.checks.installed_bridge_identity) { throw 'Missing installed-bridge evidence' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

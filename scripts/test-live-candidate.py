@@ -151,11 +151,13 @@ async def exercise(session, case):
         # No chain-parameter getter exists. Require the same unmodified stock
         # Utility and human confirmation before using the index returned for
         # its top-level copy. UI labels can differ from Live API parameter names.
-        confirmed = input(
+        print(
             "Inspect track 0 / rack device 2 / chain 0 / device 0. Confirm an "
             "identical, unmodified stock Utility with no active/overridden "
-            "automation. Type SAME UTILITY to use the matching parameter index: "
+            "automation. Type SAME UTILITY to use the matching parameter index:",
+            flush=True,
         )
+        confirmed = input()
         assert confirmed == "SAME UTILITY", "Nested Utility mismatch; no parameters were changed"
         selected["set_chain_device_parameter"] = gain
         print(
@@ -165,7 +167,10 @@ async def exercise(session, case):
                         "location": "chain",
                         "name_from_identical_top_level_device": gain["name"],
                         "parameter_index": gain["index"],
-                        "source": "returned top-level index plus explicit identical-stock-Utility confirmation",
+                        "source": (
+                            "returned top-level index plus explicit "
+                            "identical-stock-Utility confirmation"
+                        ),
                     }
                 }
             ),
@@ -197,12 +202,13 @@ async def exercise(session, case):
                 assert math.isclose(unchanged["value"], db["native"], abs_tol=1e-5)
             else:
                 # There is no nested-device parameter getter in this toolset.
-                assert (
-                    input(
-                        f"Inspect identical rack-chain Utility gain control (parameter index {parameter['index']}): still -12 dB after rejection? Type PASS: "
-                    ).strip()
-                    == "PASS"
+                print(
+                    "Inspect identical rack-chain Utility gain control "
+                    f"(parameter index {parameter['index']}): still -12 dB "
+                    "after rejection? Type PASS:",
+                    flush=True,
                 )
+                assert input().strip() == "PASS"
             await call(name, {**args, "value": "-inf dB"})
             await call(name, {**args, "value": "nan"}, error=True)
             await call(name, {**args, "value": "inf"}, error=True)
@@ -210,53 +216,94 @@ async def exercise(session, case):
         assert max(db_results) - min(db_results) <= 1e-5
         return
 
-    if case == "automation":
-        # Run this case once per freshly prepared fixture. Existing clips are not overwritten.
+    if case in {"automation", "automation-points-zero"}:
+        # Each case needs its own pristine saved fixture, with no existing clip.
         assert not track["clip_slots"][0]["has_clip"], "Reopen the empty fixture first"
         await call("create_clip", {"track_index": 0, "clip_index": 0, "length": 4.0})
         baseline_notes = await call("get_clip_notes", {"track_index": 0, "clip_index": 0})
+        sample_times = [0.001, 0.251, 1.501, 2.001, 3.999]
+        empty = await call("read_automation", {**target, "times": sample_times})
+        assert empty["has_envelope"] is False, "Fresh fixture unexpectedly has an envelope"
         await require_inactive_automation()
-        points_written = await call(
-            "write_automation",
-            {**target, "points": [{"time": 0.0, "value": low}, {"time": 2.0, "value": high}]},
-        )
-        assert points_written["start_settled"] is True, (
-            "Beat-zero points start unconfirmed; retain warning and inspect Live"
-        )
-        times = [0.001, 1.999, 2.001, 3.999]
-        before = await call("read_automation", {**target, "times": times})
-        # Expected values: low, low, high, high. Inspect the sample assertions below.
-        assert_samples(before, [low, low, high, high], hi - lo)
-        # Invalid explicit duration must be rejected before the existing envelope is cleared.
-        await call(
-            "write_automation",
-            {**target, "points": [{"time": 0.0, "duration": 0.0, "value": low}]},
-            error=True,
-        )
-        after = await call("read_automation", {**target, "times": times})
-        assert after == before, "Invalid request changed the existing envelope"
-        assert await call("get_clip_notes", {"track_index": 0, "clip_index": 0}) == baseline_notes
-        await require_inactive_automation()
-        written = await call(
-            "write_automation",
-            {
+        if case == "automation-points-zero":
+            request = {
+                **target,
+                "points": [{"time": 0.0, "value": low}, {"time": 2.0, "value": high}],
+            }
+            expected = [low, low, low, high, high]
+        else:
+            # Seed the beat-zero ramp before there is an active envelope.
+            request = {
                 **target,
                 "mode": "ramp",
                 "step_length": 0.25,
                 "points": [{"time": 0.0, "value": low}, {"time": 3.0, "value": high}],
-            },
-        )
+            }
+            # Twelve stairs reach the final value on stair 11 (beat 2.75).
+            expected = [
+                low,
+                low + (high - low) / 11,
+                low + (high - low) * 6 / 11,
+                low + (high - low) * 8 / 11,
+                high,
+            ]
+        written = await call("write_automation", request)
         assert written["start_settled"] is True, (
             "Beat-zero start unconfirmed; retain warning and inspect Live"
         )
-        ramp = await call("read_automation", {**target, "times": [0.001, 1.501, 3.001, 3.999]})
-        # Twelve stairs reach the final value on stair 11 (beat 2.75).
-        # Beat 1.501 is stair 6 of the eleven value increments.
-        assert_samples(ramp, [low, low + (high - low) * 6 / 11, high, high], hi - lo)
+        assert written["prior_automation_state"] == 0
+        assert math.isclose(written["prior_value"], gain["value"], abs_tol=1e-5)
+        seeded = await call("read_automation", {**target, "times": sample_times})
+        assert_samples(seeded, expected, hi - lo)
+
+        # One Undo must recover both the prior manual value and missing envelope.
         await call("undo")
-        restored = await call("read_automation", {**target, "times": times})
-        assert_samples(restored, [low, low, high, high], hi - lo)
+        undone = await call("read_automation", {**target, "times": sample_times})
+        assert undone["has_envelope"] is False
+        prior = await call("get_device_parameters", {"track_index": 0, "device_index": 1})
+        prior_parameter = select_gain(prior, "regular-after-seed-undo")
+        assert math.isclose(prior_parameter["value"], gain["value"], abs_tol=1e-5)
         await call("redo")
+        restored = await call("read_automation", {**target, "times": sample_times})
+        assert_samples(restored, expected, hi - lo)
+        assert await call("get_clip_notes", {"track_index": 0, "clip_index": 0}) == baseline_notes
+        if case == "automation-points-zero":
+            return
+
+        # A later-starting replacement does not seed and is permitted even when
+        # the preceding envelope makes automation_state nonzero.
+        current = await call("get_device_parameters", {"track_index": 0, "device_index": 1})
+        select_gain(current, "regular-before-nonzero-points-replacement")
+        replacement = await call(
+            "write_automation",
+            {
+                **target,
+                "points": [
+                    {"time": 0.25, "duration": 1.75, "value": low},
+                    {"time": 2.0, "duration": 2.0, "value": high},
+                ],
+            },
+        )
+        assert replacement["start_value_set"] is None
+        point_times = [0.251, 1.999, 2.001, 3.999]
+        before_invalid = await call("read_automation", {**target, "times": point_times})
+        assert_samples(before_invalid, [low, low, high, high], hi - lo)
+        # Invalid explicit duration must not clear the replacement envelope.
+        await call(
+            "write_automation",
+            {**target, "points": [{"time": 0.25, "duration": 0.0, "value": low}]},
+            error=True,
+        )
+        after_invalid = await call("read_automation", {**target, "times": point_times})
+        assert after_invalid == before_invalid, "Invalid request changed the existing envelope"
+        assert await call("get_clip_notes", {"track_index": 0, "clip_index": 0}) == baseline_notes
+        # Undo the valid replacement, not the rejected request. Recover the ramp.
+        await call("undo")
+        ramp_restored = await call("read_automation", {**target, "times": sample_times})
+        assert_samples(ramp_restored, expected, hi - lo)
+        await call("redo")
+        points_restored = await call("read_automation", {**target, "times": point_times})
+        assert_samples(points_restored, [low, low, high, high], hi - lo)
         await call("read_automation", {**target, "start": 0.0, "end": 4.0, "step": 1.0})
         await call("read_automation", {**target, "times": [0.0], "step": 1.0}, error=True)
         return
@@ -403,7 +450,16 @@ def assert_samples(result, expected, span):
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "case", choices=["inventory", "parameters", "automation", "batch", "record", "cancel"]
+        "case",
+        choices=[
+            "inventory",
+            "parameters",
+            "automation",
+            "automation-points-zero",
+            "batch",
+            "record",
+            "cancel",
+        ],
     )
     args = parser.parse_args()
     env = {**os.environ, "ABLETON_HOST": "127.0.0.1", "ABLETON_PORT": "9877"}

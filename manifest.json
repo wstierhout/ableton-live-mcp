@@ -16,6 +16,7 @@
   "keywords": ["ableton", "ableton live", "music", "midi", "daw", "mcp"],
   "server": {
     "type": "python",
+    "entry_point": "ableton_live_mcp/server.py",
     "mcp_config": {
       "command": "uvx",
       "args": ["mcp-server-ableton-live@2.0.0rc1"],

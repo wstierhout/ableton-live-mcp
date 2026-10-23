@@ -59,6 +59,13 @@ try:
     socket.create_connection = deny_network
     socket.socket.connect = deny_network
     socket.socket.connect_ex = deny_network
+    try:
+        blocked_connection = socket.create_connection(("127.0.0.1", 9877), timeout=0.1)
+    except AssertionError:
+        report["checks"]["live_connection_blocked"] = True
+    else:
+        blocked_connection.close()
+        raise AssertionError("Network guard did not block the Live connection probe")
     os.environ.pop("ABLETON_TOOLSETS", None)
     os.environ["ABLETON_HOST"] = "127.0.0.1"
     os.environ["ABLETON_PORT"] = "1"

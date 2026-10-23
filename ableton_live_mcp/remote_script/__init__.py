@@ -778,6 +778,12 @@ class AbletonMCP(ControlSurface):
                     del self._receipts[old]
                 self._receipts[operation_id] = receipt
         response_queue = queue.Queue()
+        timeout = self._COMMAND_TIMEOUTS.get(command_type, 10.0)
+        if command_type == "batch" and isinstance(params.get("commands"), list):
+            for cmd in params.get("commands") or []:
+                sub = cmd.get("type", "") if isinstance(cmd, dict) else ""
+                timeout = max(timeout, self._COMMAND_TIMEOUTS.get(self._BATCH_ALIASES.get(sub, sub), 0.0))
+        reply_deadline = time.monotonic() + timeout
 
         def finish(result=None, error=None):
             response = {"operation_id": operation_id, "status": "success", "result": result}
@@ -803,7 +809,12 @@ class AbletonMCP(ControlSurface):
                 receipt["state"] = "running"
             try:
                 guarded = self._guard_target(params)
-                result = handler(self, guarded)
+                previous_deadline = getattr(self, "_command_deadline", None)
+                self._command_deadline = reply_deadline
+                try:
+                    result = handler(self, guarded)
+                finally:
+                    self._command_deadline = previous_deadline
                 if isinstance(result, _Deferred):
                     result.start(finish)
                 else:
@@ -813,11 +824,6 @@ class AbletonMCP(ControlSurface):
                 finish(error=exc)
 
         self.schedule_message(0, main_thread_task)
-        timeout = self._COMMAND_TIMEOUTS.get(command_type, 10.0)
-        if command_type == "batch" and isinstance(params.get("commands"), list):
-            for cmd in params.get("commands") or []:
-                sub = cmd.get("type", "") if isinstance(cmd, dict) else ""
-                timeout = max(timeout, self._COMMAND_TIMEOUTS.get(self._BATCH_ALIASES.get(sub, sub), 0.0))
         try:
             return response_queue.get(timeout=timeout)
         except queue.Empty:
@@ -1653,6 +1659,13 @@ class AbletonMCP(ControlSurface):
             raise ValueError("Beat-zero writes require inactive, non-overridden automation; stop playback and inspect automation_state before retrying. No automation changed")
         if start_value is not None and getattr(self, "_batch_call", False):
             raise ValueError("Beat-zero automation requires the standalone tool, outside a batch")
+        settle_deadline = time.monotonic() + 2.0
+        command_deadline = getattr(self, "_command_deadline", None)
+        if command_deadline is not None:
+            settle_deadline = min(settle_deadline, command_deadline - 0.1)
+        if start_value is not None and time.monotonic() >= settle_deadline:
+            raise CommandFailure("Insufficient reply time for beat-zero automation; no edit made",
+                                 {"may_have_applied": False, "envelope_replaced": False})
         own_undo = not getattr(self, "_batch_call", False)
         undo_open = [False]
 
@@ -1710,7 +1723,7 @@ class AbletonMCP(ControlSurface):
             close_undo()
             raise
         def start(finish):
-            deadline = time.monotonic() + 2.0
+            deadline = settle_deadline
             attempts = [0]
             def settle():
                 try:
