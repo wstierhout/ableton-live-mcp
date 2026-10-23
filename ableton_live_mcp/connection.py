@@ -25,7 +25,11 @@ logger = logging.getLogger("AbletonMCPServer")
 # drop the socket at the same instant the script replies. Keep these two maps
 # in sync; SOCKET_HEADROOM covers transport latency on top of the script budget.
 REMOTE_DEFAULT_TIMEOUT = 10.0
-REMOTE_COMMAND_TIMEOUTS = {"create_audio_clip": 60.0}
+REMOTE_COMMAND_TIMEOUTS = {
+    "create_audio_clip": 60.0,
+    "write_arrangement_automation": 60.0,
+    "clear_arrangement_automation": 60.0,
+}
 SOCKET_HEADROOM = 5.0
 
 _NOT_CONNECTED_MSG = (

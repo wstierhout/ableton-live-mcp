@@ -44,6 +44,16 @@ def _display_number(text):
     return value, unit
 
 
+def _sampled_display(param, raw):
+    """Display number for one sampled raw value. Range ends shown as '-inf dB' (Utility,
+    mixer-style gains) map to -inf so the rest of the range can still be resolved."""
+    text = str(param.str_for_value(raw))
+    match = re.fullmatch(r"\s*([+-]?)inf\s*(dB)\s*", text, re.I)
+    if match:
+        return (-math.inf if match.group(1) == "-" else math.inf), "db"
+    return _display_number(text)
+
+
 def _parameter_value(param, requested):
     """Resolve display text without speculative writes; reject ambiguous mappings."""
     low, high = float(param.min), float(param.max)
@@ -69,7 +79,7 @@ def _parameter_value(param, requested):
     samples = []
     for i in range(9):
         raw = low + (high - low) * i / 8
-        display, found_unit = _display_number(param.str_for_value(raw))
+        display, found_unit = _sampled_display(param, raw)
         if found_unit != unit:
             raise ValueError("Requested unit does not match this parameter")
         samples.append(display)
@@ -83,7 +93,7 @@ def _parameter_value(param, requested):
     candidates = []
     for _ in range(32):
         raw = (low + high) / 2
-        display, found_unit = _display_number(param.str_for_value(raw))
+        display, found_unit = _sampled_display(param, raw)
         if found_unit != unit:
             raise ValueError("Display unit changes across the range; use a native value")
         candidates.append((abs(display - target), raw))
@@ -95,6 +105,69 @@ def _parameter_value(param, requested):
     if error > max(abs(target) * 0.005, 0.01):
         raise ValueError("Cannot resolve requested display value reliably; use a native value")
     return raw, "display conversion is approximate; check returned display"
+
+
+def _automation_points(points):
+    """Validate [{time, value, step?}] and return (time, value, step) tuples sorted by time.
+
+    Values must already be native numbers; display text is resolved per parameter
+    by the caller.
+    """
+    out = []
+    for p in points or []:
+        if not isinstance(p, dict) or "time" not in p or "value" not in p:
+            raise ValueError("Each automation point needs 'time' and 'value'")
+        t = float(p["time"])
+        if not math.isfinite(t):
+            raise ValueError("Automation point time must be finite")
+        out.append((t, p["value"], bool(p.get("step", False))))
+    if not out:
+        raise ValueError("At least one automation point is required")
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _automation_value_at(points, t):
+    """Curve value at time t. Ramps linearly between points; a point with step=True
+    holds its value until the next point; end values are held outside the points."""
+    if t <= points[0][0]:
+        return points[0][1]
+    for (t0, v0, step0), (t1, v1, _) in zip(points, points[1:]):
+        if t < t1:
+            if step0 or t1 <= t0:
+                return v0
+            return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+    return points[-1][1]
+
+
+def _automation_segments(points, start, end, resolution, lo, hi):
+    """Turn a curve into constant (time, duration, value) steps covering [start, end).
+
+    Clip envelopes only take steps (AutomationEnvelope.insert_step), so ramps are
+    approximated by steps `resolution` beats wide. Point times are also step
+    boundaries so jumps land exactly; adjacent equal steps are merged.
+    """
+    resolution = max(float(resolution), 1.0 / 64)
+    bounds = set()
+    t = float(start)
+    while t < end - 1e-9:
+        bounds.add(round(t, 9))
+        t += resolution
+    for pt, _, _ in points:
+        if start < pt < end:
+            bounds.add(round(pt, 9))
+    bounds = sorted(bounds) + [float(end)]
+    tolerance = 1e-9 * max(1.0, abs(hi - lo))
+    segments = []
+    for b0, b1 in zip(bounds, bounds[1:]):
+        value = min(hi, max(lo, _automation_value_at(points, b0)))
+        if segments and abs(segments[-1][2] - value) <= tolerance:
+            t_prev, dur_prev, v_prev = segments[-1]
+            segments[-1] = (t_prev, dur_prev + (b1 - b0), v_prev)
+        else:
+            segments.append((b0, b1 - b0, value))
+    return segments
+
 
 def create_instance(c_instance):
     """Create and return the AbletonMCP script instance"""
@@ -382,6 +455,8 @@ class AbletonMCP(ControlSurface):
         "set_device_enabled": lambda s, p: s._set_device_enabled(s._req(p, "track_index"), s._req(p, "device_index"), p.get("enabled", True)),
         "write_automation": lambda s, p: s._write_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "points")),
         "clear_automation": lambda s, p: s._clear_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter")),
+        "write_arrangement_automation": lambda s, p: s._write_arrangement_automation(s._req(p, "track_index"), s._req(p, "curves"), p.get("resolution", 0.125)),
+        "clear_arrangement_automation": lambda s, p: s._clear_arrangement_automation(s._req(p, "track_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "value"), p.get("start_time", 0.0), p.get("end_time")),
         "switch_to_arrangement_view": lambda s, p: s._switch_to_arrangement_view(),
         "set_current_song_time": lambda s, p: s._set_current_song_time(p.get("time", 0.0)),
         "duplicate_session_clip_to_arrangement": lambda s, p: s._duplicate_session_clip_to_arrangement(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "destination_time")),
@@ -463,7 +538,11 @@ class AbletonMCP(ControlSurface):
     _ALL_COMMANDS = {**_MUTATING_COMMANDS, **_READONLY_COMMANDS}
 
     # Commands whose main-thread work can exceed the default 10 s budget.
-    _COMMAND_TIMEOUTS = {"create_audio_clip": 60.0}
+    _COMMAND_TIMEOUTS = {
+        "create_audio_clip": 60.0,
+        "write_arrangement_automation": 60.0,
+        "clear_arrangement_automation": 60.0,
+    }
 
     def _process_command(self, command):
         """Process a command from the client and return a response"""
@@ -1425,6 +1504,162 @@ class AbletonMCP(ControlSurface):
         param = self._resolve_parameter(device, parameter)
         clip.clear_envelope(param)
         return {"cleared": True, "parameter": param.name}
+
+    # -- arrangement (track) automation --
+    #
+    # Live's API refuses to create envelopes in Arrangement clips, but when a
+    # Session clip carrying an envelope is duplicated into the Arrangement, Live
+    # turns the envelope into track automation over that clip's span and leaves
+    # the rest of the lane alone. So each MIDI clip under the curve is rebuilt
+    # through a spare Session slot (the carrier): same notes, name and color plus
+    # the curve, duplicated back onto its own position.
+
+    @staticmethod
+    def _clip_time_range(clip):
+        """Clip-local beat range that one pass through the clip plays."""
+        if getattr(clip, "looping", False):
+            return float(clip.loop_start), float(clip.loop_end)
+        return float(clip.start_marker), float(clip.end_marker)
+
+    def _resolve_automation_curves(self, track_index, curves):
+        """[{device_index, parameter, points}] -> [(param, label, points)] with native values."""
+        if not isinstance(curves, list) or not curves:
+            raise ValueError("curves must be a non-empty list of {device_index, parameter, points}")
+        resolved, seen = [], set()
+        for i, spec in enumerate(curves):
+            if not isinstance(spec, dict):
+                raise ValueError(f"curves[{i}] must be an object")
+            device_index = int(self._req(spec, "device_index"))
+            device = self._get_device(track_index, device_index)
+            param = self._resolve_parameter(device, self._req(spec, "parameter"))
+            key = (device_index, param.name)
+            if key in seen:
+                raise ValueError(f"curves[{i}]: {device.name} / {param.name} appears twice")
+            seen.add(key)
+            points = [(t, _parameter_value(param, v)[0], step)
+                      for t, v, step in _automation_points(spec.get("points"))]
+            resolved.append((param, device.name + " / " + param.name, points))
+        return resolved
+
+    def _write_carrier_envelope(self, clip, param, points, start, end, resolution):
+        try:
+            # Some Live builds only create envelopes for the clip shown in Detail view.
+            self._song.view.detail_clip = clip
+        except Exception:
+            pass
+        try:
+            clip.clear_envelope(param)
+        except Exception:
+            pass
+        env = clip.automation_envelope(param)
+        if env is None and hasattr(clip, "create_automation_envelope"):
+            env = clip.create_automation_envelope(param)
+        if env is None:
+            raise Exception(f"Live did not create an envelope for '{param.name}'")
+        segments = _automation_segments(points, start, end, resolution,
+                                        float(param.min), float(param.max))
+        for t, duration, value in segments:
+            env.insert_step(t, duration, value)
+        return len(segments)
+
+    def _write_arrangement_automation(self, track_index, curves, resolution=0.125):
+        track = self._get_track(track_index)
+        resolved = self._resolve_automation_curves(track_index, curves)
+        spans = [(points[0][0], max(points[-1][0], points[0][0] + 1e-6))
+                 for _, _, points in resolved]
+        range_start = min(s for s, _ in spans)
+        range_end = max(e for _, e in spans)
+
+        specs, skipped = [], []
+        for clip in track.arrangement_clips:
+            start, end = float(clip.start_time), float(clip.end_time)
+            if end <= range_start or start >= range_end:
+                continue
+            first, last = self._clip_time_range(clip)
+            reason = None
+            if not clip.is_midi_clip:
+                reason = "audio clip (only MIDI clips can carry automation in)"
+            elif abs((end - start) - (last - first)) > 1e-6:
+                reason = "looped or trimmed in the Arrangement; rebuilding would change it"
+            elif abs(float(clip.start_marker) - first) > 1e-6:
+                reason = "start marker differs from loop start; rebuilding would shift notes"
+            if reason:
+                skipped.append({"name": clip.name, "start_time": start, "reason": reason})
+                continue
+            notes = [dict(n, start_time=n["start_time"] - first)
+                     for n in self._read_all_notes(clip)
+                     if first - 1e-9 <= n["start_time"] < last]
+            specs.append({"name": clip.name, "color": clip.color, "start": start,
+                          "end": end, "length": last - first, "notes": notes})
+        if not specs:
+            raise Exception(
+                f"No rebuildable MIDI clips on track '{track.name}' between beats "
+                f"{range_start} and {range_end}. Skipped: {skipped}. Automation is carried "
+                "in by rebuilding MIDI clips, so the range needs MIDI clips that are not "
+                "looped or trimmed in the Arrangement.")
+
+        slot = next((s for s in track.clip_slots if not s.has_clip), None)
+        if slot is None:
+            raise Exception(f"Track '{track.name}' needs one empty Session slot to carry "
+                            "the automation; free one and retry")
+
+        written = []
+        self._song.begin_undo_step()
+        try:
+            for spec in specs:
+                if slot.has_clip:
+                    slot.delete_clip()
+                slot.create_clip(spec["length"])
+                carrier = slot.clip
+                carrier.name = spec["name"]
+                try:
+                    carrier.color = spec["color"]
+                except Exception:
+                    pass
+                self._replace_all_notes(carrier, spec["notes"])
+                lanes = []
+                for (param, label, points), (span_start, span_end) in zip(resolved, spans):
+                    # Only curves whose own span overlaps this clip are written into it.
+                    if spec["end"] <= span_start or spec["start"] >= span_end:
+                        continue
+                    local = [(t - spec["start"], v, step) for t, v, step in points]
+                    steps = self._write_carrier_envelope(
+                        carrier, param, local, 0.0, spec["length"], resolution)
+                    lanes.append({"parameter": label, "steps": steps})
+                track.duplicate_clip_to_arrangement(carrier, spec["start"])
+                written.append({"name": spec["name"], "start_time": spec["start"],
+                                "end_time": spec["end"], "lanes": lanes})
+        finally:
+            if slot.has_clip:
+                slot.delete_clip()
+            self._song.end_undo_step()
+        return {"track_index": track_index, "track_name": track.name,
+                "parameters": [label for _, label, _ in resolved],
+                "range_start": range_start, "range_end": range_end,
+                "rebuilt_clips": written, "skipped": skipped}
+
+    def _clear_arrangement_automation(self, track_index, device_index, parameter, value,
+                                      start_time=0.0, end_time=None):
+        """Flatten a parameter's track automation to `value` over the clips in a range.
+
+        Live's API can't delete track automation, so the span of every MIDI clip
+        overlapping the range is overwritten with a constant instead.
+        """
+        track = self._get_track(track_index)
+        start = float(start_time or 0.0)
+        if end_time is None:
+            end = max([float(c.end_time) for c in track.arrangement_clips] or [start + 1.0])
+        else:
+            end = float(end_time)
+        if end <= start:
+            raise ValueError("end_time must be after start_time")
+        result = self._write_arrangement_automation(
+            track_index,
+            [{"device_index": device_index, "parameter": parameter,
+              "points": [{"time": start, "value": value}, {"time": end, "value": value}]}],
+            1.0)
+        result["flattened_to"] = value
+        return result
 
     # -- locators --
     def _create_locator(self, name):

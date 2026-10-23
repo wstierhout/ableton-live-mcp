@@ -1,13 +1,22 @@
-"""Arrangement view, timeline placement, and clip automation."""
+"""Arrangement view, timeline placement, clip automation, and track automation."""
 
 import json
+from typing import Any
 
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from ._util import ClipIndex, DeviceIndex, DeviceParameter, TrackIndex
+from ._util import (
+    ArrangementBeat,
+    ClipIndex,
+    DeviceIndex,
+    DeviceParameter,
+    DeviceParameterValue,
+    TrackIndex,
+    params,
+)
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -153,3 +162,83 @@ def clear_automation(
         },
     )
     return f"Cleared automation for {r.get('parameter')}"
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+def write_arrangement_automation(
+    ctx: Context,
+    track_index: TrackIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    points: list[dict[str, Any]],
+    extra_curves: list[dict[str, Any]] | None = None,
+    resolution: float = 0.125,
+) -> str:
+    """Write real track automation for a device parameter across the Arrangement
+    timeline (filter sweeps, builds, fades, ducking), not just inside one clip.
+
+    points = [{"time": beats, "value": v, "step": false}, ...]. time is in ABSOLUTE
+    Arrangement beats (bar N starts at (N-1)*4 in 4/4). value is a native number or
+    display text such as "-6 dB" or "250 Hz", resolved like set_device_parameter.
+    Values ramp linearly between points, written as steps `resolution` beats wide
+    (default 1/32 note). "step": true holds a point's value until the next point;
+    use it for jumps and on/off switches. Before the first and after the last point
+    the end values are held.
+
+    How it works: Live cannot write envelopes into Arrangement clips, so every MIDI
+    clip on the track that overlaps the curve is REBUILT. It is copied through an
+    empty Session slot with the same notes, name and color plus the curve, then
+    duplicated back onto its own position, where Live turns the envelope into track
+    automation over that clip's whole span. The lane outside rebuilt clips is left
+    untouched. One undo step reverts the whole call.
+
+    Requirements and limits: the track needs one empty Session slot and MIDI clips
+    covering the range. Audio clips, and clips looped or trimmed inside the
+    Arrangement, are skipped and listed under "skipped". Group tracks and tracks
+    without clips cannot be automated this way. Rebuilding a clip can reset other
+    automated parameters over its span, so pass every parameter that should change
+    in the same span through extra_curves (items shaped
+    {"device_index": int, "parameter": name or index, "points": [...]}) to write
+    them together. Verify afterwards with get_device_parameters at a few playhead
+    positions while the transport is stopped.
+    """
+    curves = [{"device_index": device_index, "parameter": parameter, "points": points}]
+    curves += extra_curves or []
+    result = get_ableton_connection().send_command(
+        "write_arrangement_automation",
+        {"track_index": track_index, "curves": curves, "resolution": resolution},
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
+def clear_arrangement_automation(
+    ctx: Context,
+    track_index: TrackIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    value: DeviceParameterValue,
+    start_time: ArrangementBeat = 0.0,
+    end_time: ArrangementBeat | None = None,
+) -> str:
+    """Flatten a device parameter's track automation to one constant value.
+
+    Live's API cannot delete track automation, so every MIDI clip overlapping
+    start_time..end_time (beats; end_time defaults to the end of the track's last
+    clip) is rebuilt like write_arrangement_automation and its whole span is set to
+    `value` (native number or display text such as "0 dB"). Same requirements:
+    one empty Session slot on the track; audio and looped/trimmed clips are skipped.
+    One undo step reverts the call.
+    """
+    result = get_ableton_connection().send_command(
+        "clear_arrangement_automation",
+        params(
+            track_index=track_index,
+            device_index=device_index,
+            parameter=parameter,
+            value=value,
+            start_time=start_time,
+            end_time=end_time,
+        ),
+    )
+    return json.dumps(result, indent=2)

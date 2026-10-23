@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- `write_arrangement_automation`: real track automation across the Arrangement
+  timeline (filter sweeps, builds, fades, ducking), not just inside one clip. Live's
+  API cannot write envelopes into Arrangement clips, so each MIDI clip under the
+  curve is rebuilt through an empty Session slot with the same notes, name and color
+  plus the envelope, then duplicated back onto its position, where Live converts the
+  envelope into track automation. Points take absolute beats, native or display
+  values ("-6 dB"), linear ramps or `step` jumps; several parameters can be written
+  in one pass (`extra_curves`) so rebuilt clips keep all their lanes. One undo step
+  reverts the call. Audio clips and clips looped or trimmed in the Arrangement are
+  skipped and reported.
+- `clear_arrangement_automation`: flatten a parameter's track automation to one
+  value over a beat range by the same mechanism.
+- Display values such as `"-12 dB"` now resolve on parameters whose range ends at
+  `-inf dB` (Utility Gain/Output and similar). Previously the `-inf dB` end of the
+  range made every dB request fail.
+- 158 tools total. Rerun `install --replace` and restart Live to pick up the
+  updated Remote Script.
+
 ## 1.8.1 — 2026-09-16
 
 - Live 11: the Remote Script no longer logs `Server accept error: timed out` every
