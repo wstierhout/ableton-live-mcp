@@ -196,6 +196,13 @@ def batch_commands(commands: list[dict], operation_id: str | None = None) -> dic
     """
     conn = get_ableton_connection()
     conn.require_capability("batch_preflight")
+    if isinstance(commands, list):
+        for command in commands:
+            name = command.get("type") if isinstance(command, dict) else None
+            if name == "write_automation":
+                conn.require_capability("automation_v2")
+            elif name == "read_automation":
+                conn.require_capability("automation_readback")
     return conn.send_command("batch", {"commands": commands}, operation_id=operation_id)
 
 

@@ -1,10 +1,13 @@
 """Arrangement view, timeline placement, and clip automation."""
 
+from typing import Annotated, Literal
+
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from ..app import mcp
 from ..connection import get_ableton_connection
-from ._util import ClipIndex, DeviceIndex, DeviceParameter, TrackIndex
+from ._util import ClipIndex, DeviceIndex, DeviceParameter, TrackIndex, params
 
 
 @mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -96,25 +99,81 @@ def delete_arrangement_clip(track_index: int, arrangement_clip_index: int) -> di
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False))
+AutomationPoints = Annotated[
+    list[dict[str, float]],
+    Field(min_length=1, max_length=4096, description="Ordered native breakpoints: time/value and optional positive duration in beats."),
+]
+AutomationMode = Literal["points", "ramp"]
+RampStepLength = Annotated[float, Field(gt=0, le=4)]
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
 def write_automation(
-    track_index: int,
-    clip_index: int,
-    device_index: int,
-    parameter: str | int,
-    points: list[dict[str, float]],
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    points: AutomationPoints,
+    mode: AutomationMode = "points",
+    step_length: RampStepLength = 0.0625,
 ) -> dict:
-    """Write clip automation for a device parameter. points = [{"time": beats, "value": v}, ...].
-    Replaces any existing envelope for that parameter on the clip."""
-    return get_ableton_connection().send_command(
+    """Replace a Session clip's parameter envelope with bounded steps or a ramp.
+
+    Times are beats from clip start; values use the native min/max from
+    get_device_parameters. In points mode, omitted duration holds until the next
+    point or clip end. Explicit duration must be positive and cannot overlap the
+    next point or extend past the clip. Points must be ordered and unique.
+
+    Ramp mode joins ordered points as a staircase, at step_length beats (default
+    0.0625), up to 4096 generated steps. Equal-time points make a jump. Only the
+    last ramp point may specify duration. The last segment reaches its final
+    value before its end. A point at clip end is an endpoint, not a zero-length
+    inserted step. All input is validated before existing automation is cleared.
+
+    A ramp starting at zero sets the parameter's value, then waits on later Live
+    ticks before creating the envelope. The edit is submitted once; uncertain
+    readback returns a warning, never a blind rewrite. Check start_settled and
+    verify through read_automation, sampling just after step boundaries. Batch
+    calls sequence the same deferred operation before following commands.
+    """
+    conn = get_ableton_connection()
+    conn.require_capability("automation_v2")
+    return conn.send_command(
         "write_automation",
-        {
-            "track_index": track_index,
-            "clip_index": clip_index,
-            "device_index": device_index,
-            "parameter": parameter,
-            "points": points,
-        },
+        {"track_index": track_index, "clip_index": clip_index,
+         "device_index": device_index, "parameter": parameter, "points": points,
+         "mode": mode, "step_length": step_length},
+    )
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def read_automation(
+    track_index: TrackIndex,
+    clip_index: ClipIndex,
+    device_index: DeviceIndex,
+    parameter: DeviceParameter,
+    times: Annotated[list[float], Field(min_length=1, max_length=1024)] | None = None,
+    start: Annotated[float, Field(ge=0)] | None = None,
+    end: Annotated[float, Field(ge=0)] | None = None,
+    step: Annotated[float, Field(gt=0)] | None = None,
+) -> dict:
+    """Read a Session clip envelope without creating or changing it.
+
+    Choose explicit times OR an inclusive start/end/step grid (defaults 0 to clip
+    end, every beat). At most 1024 finite samples within the clip per call.
+    Returns native values, optional display text, parameter min/max/current value
+    and has_envelope=false for a missing envelope. Samples are Live's actual
+    stepped envelope, not a reconstruction of the supplied control points.
+    On Live 11 an exact step boundary can return the value just before that
+    step; sample just after the boundary to check the new value.
+    """
+    conn = get_ableton_connection()
+    conn.require_capability("automation_readback")
+    return conn.send_command(
+        "read_automation",
+        params(track_index=track_index, clip_index=clip_index,
+               device_index=device_index, parameter=parameter,
+               times=times, start=start, end=end, step=step),
     )
 
 

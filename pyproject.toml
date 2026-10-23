@@ -1,7 +1,7 @@
 [project]
 name = "mcp-server-ableton-live"
-version = "1.8.1"
-description = "Control Ableton Live 11/12 with 156 typed MCP tools for MIDI, devices, arrangement, mixing, automation, and offline .als analysis"
+version = "2.0.0rc1"
+description = "Control Ableton Live 11/12 with 157 typed MCP tools for MIDI, devices, arrangement, mixing, automation, and offline .als analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = [
@@ -19,7 +19,7 @@ authors = [
 ]
 license = "MIT"
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

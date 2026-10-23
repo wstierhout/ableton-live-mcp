@@ -467,7 +467,7 @@ cli = [
 
 [[package]]
 name = "mcp-server-ableton-live"
-version = "1.8.1"
+version = "2.0.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "av", version = "17.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

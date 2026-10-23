@@ -1,6 +1,6 @@
 """Ableton Live integration through the Model Context Protocol."""
 
-__version__ = "1.8.1"
+__version__ = "2.0.0rc1"
 
 __all__ = ["AbletonConnection", "get_ableton_connection", "__version__"]
 

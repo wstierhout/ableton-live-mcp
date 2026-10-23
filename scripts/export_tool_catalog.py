@@ -42,6 +42,18 @@ def catalogue():
     return {"version": __version__, "toolCount": len(entries), "tools": entries}
 
 
+def _normalized_version(value):
+    """Compare PEP 440 and SemVer forms of the same release/prerelease."""
+    match = re.fullmatch(
+        r"(\d+\.\d+\.\d+)(?:-?(alpha|beta|a|b|rc)\.?(0|[1-9]\d*))?", value
+    )
+    if not match:
+        raise ValueError(f"Unsupported release version: {value!r}")
+    release, label, serial = match.groups()
+    label = {"alpha": "a", "beta": "b"}.get(label, label)
+    return release, label, int(serial) if serial is not None else None
+
+
 def check_release():
     """Check version drift before publishing, independently of functional tests."""
     manifest = json.loads((ROOT / "manifest.json").read_text())
@@ -68,7 +80,19 @@ def check_release():
         versions.append(json.loads((plugin / ".codex-plugin/plugin.json").read_text())["version"])
         config = json.loads((plugin / ".mcp.json").read_text())
         assert config["mcpServers"]["ableton"]["args"] == [f"mcp-server-ableton-live@{__version__}"]
-    assert all(version == __version__ for version in versions), f"Version drift: {versions}"
+    expected = _normalized_version(__version__)
+    assert all(_normalized_version(version) == expected for version in versions), (
+        f"Version drift: {versions}"
+    )
+    # Launch pins and package versions retain their canonical PyPI spelling even
+    # when display manifests use a SemVer prerelease such as 2.0.0-rc.1.
+    assert project == bridge_version == __version__, "Package/bridge version drift"
+    assert all(package["version"] == __version__ for package in registry["packages"]), (
+        "Registry package pin drift"
+    )
+    assert manifest["server"]["mcp_config"]["args"] == [
+        f"mcp-server-ableton-live@{__version__}"
+    ], "Desktop launch pin drift"
     assert len(registry["description"]) <= 100, "MCP Registry description limit"
 
 

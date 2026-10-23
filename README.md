@@ -11,7 +11,7 @@
 **Website and installation guide: [abletonmcp.com](https://abletonmcp.com)**
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 156 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 157 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
 a running Ableton Live set, plus offline tools that read and diff saved `.als`
 project files with Live closed.
@@ -19,6 +19,24 @@ project files with Live closed.
 A Remote Script runs inside Live and exposes the Live API over a local socket. The
 MCP server turns that into typed, validated tools that an AI can call correctly,
 with per-tool documentation, read-only and destructive hints, and workflow prompts.
+
+## 2.0 release candidate
+
+This checkout is **2.0.0rc1**, an unpublished candidate with 157 tools. It includes
+clip automation duration/ramp fixes and reading, plus combined parameter conversion
+fixes from [#4](https://github.com/wstierhout/ableton-live-mcp/pull/4),
+[#5](https://github.com/wstierhout/ableton-live-mcp/pull/5),
+[#6](https://github.com/wstierhout/ableton-live-mcp/pull/6), and
+[#7](https://github.com/wstierhout/ableton-live-mcp/pull/7).
+Arrangement automation from #8 is deferred.
+
+Read the [2.0 migration notes](docs/MIGRATION-2.0.md) before upgrading clients or
+custom integrations. The version-pinned PyPI commands below apply only after this
+prerelease is published; testing an unpublished candidate requires the matching
+source checkout or supplied wheel; see the
+[Windows candidate testing guide](docs/WINDOWS-CANDIDATE-TESTING.md). Automated
+checks and real Live acceptance are separate release gates; this notice does not
+claim either has passed.
 
 ## Quickstart
 
@@ -30,7 +48,7 @@ You need Ableton Live 11 or 12, Python 3.10+, and [uv](https://docs.astral.sh/uv
 Codex (local desktop, CLI or IDE host):
 
 ```bash
-codex mcp add ableton -- uvx mcp-server-ableton-live@1.8.1
+codex mcp add ableton -- uvx mcp-server-ableton-live@2.0.0rc1
 codex mcp list
 ```
 
@@ -39,7 +57,7 @@ For manual configuration and troubleshooting, see the [Codex guide](https://able
 Claude Code:
 
 ```bash
-claude mcp add AbletonMCP -s user -- uvx mcp-server-ableton-live@1.8.1
+claude mcp add AbletonMCP -s user -- uvx mcp-server-ableton-live@2.0.0rc1
 ```
 
 Claude Desktop or Cursor, in the `mcpServers` block of the config file:
@@ -49,20 +67,21 @@ Claude Desktop or Cursor, in the `mcpServers` block of the config file:
   "mcpServers": {
     "AbletonMCP": {
       "command": "uvx",
-      "args": ["mcp-server-ableton-live@1.8.1"]
+      "args": ["mcp-server-ableton-live@2.0.0rc1"]
     }
   }
 }
 ```
 
-(To run an unreleased revision instead, use
-`uvx --from git+https://github.com/wstierhout/ableton-live-mcp ableton-live-mcp`.)
+To test an unpublished revision, install the supplied candidate wheel or use the
+exact candidate checkout. A Git URL without a commit selects the repository's
+current default branch and may launch an older release instead.
 
 **2. Install the Remote Script.** This copies the Live-side script into your User
 Library:
 
 ```bash
-uvx mcp-server-ableton-live@1.8.1 install
+uvx mcp-server-ableton-live@2.0.0rc1 install
 ```
 
 Then activate the bridge in Live:
@@ -90,7 +109,7 @@ if the entry does not appear.
 **3. Check the setup.**
 
 ```bash
-uvx mcp-server-ableton-live@1.8.1 doctor --json
+uvx mcp-server-ableton-live@2.0.0rc1 doctor --json
 ```
 
 Use the same `--user-library "/path/to/User Library"` for install and doctor if your
@@ -110,7 +129,7 @@ an upright bass, and Rhodes chords, then put a limiter on the master at -1 dB."
 | Tracks and mixer | create and delete MIDI, audio, and return tracks; delete devices; take lanes; group-track fold; volume, pan, mute, solo, arm, sends; input/output routing; meters |
 | Clips and notes | create clips, write and edit MIDI notes (with probability), quantize with strength, Groove Pool swing, loop, gain, pitch, warp mode |
 | Devices | browse and search by name, load instruments and effects onto any track including Master and Returns, read and set any parameter, sidechain routing, sample preview, rack macro variations, Simpler sample slicing, per-pad drum control, curated device knowledge base |
-| Arrangement | place clips on the timeline, read and delete arrangement clips, write clip automation |
+| Arrangement | place clips on the timeline, read and delete arrangement clips, write and read clip automation |
 | Generators | drum patterns in 7 styles, euclidean rhythms, chord progressions, voice-led jazz voicings, 50-plus genre-aware progressions, voice-leading melodies, walking basslines, motif transforms (invert, retrograde, augment), minimalist processes, humanize, one-call session setup |
 | Batch | run many edits in one round trip and one undo step |
 | Audio and analysis | record a section to a WAV without the Export dialog, detect key and scale, scan the mix for problems, diff the session since the last check |
@@ -146,7 +165,7 @@ restarting Live keeps the bridge's snapshot format matched to the server.
 
 ## Focusing the toolset
 
-The server registers 156 tools. That is a lot for a model to choose from on a small
+The server registers 157 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups (each may span several modules): `session`, `tracks`, `clips`, `devices`,
 `browser`, `arrangement`, `generators`, `audio`, `analysis`, `offline`, `recipes`.
@@ -157,7 +176,16 @@ Unset loads everything.
 - Indices are 0-based. Times and lengths are in beats. Volume uses Live's 0.0 to 1.0
   fader range where 0.85 is 0 dB.
 - Device parameters use each parameter's own range. Read `get_device_parameters`
-  first and check min, max, and the display value before setting.
+  first and check min, max, and the display value before setting. Numeric strings
+  such as `"0.5"` use native units; display strings such as `"-12 dB"` request a
+  supported display mapping. Top-level and rack setters use the same conversion.
+- `write_automation` replaces a single Session clip parameter envelope. A point
+  holds until the next point or clip end unless a positive duration is supplied.
+  Linear/exponential ramps become bounded stepped envelopes (at most 4,096 steps).
+  `read_automation` returns at most 1,024 samples at requested beat positions,
+  including the requested interval endpoints. These are Live's sampled values,
+  not the original control points; sample just after step boundaries when checking
+  a transition. These are clip envelopes, not Arrangement automation.
 - `add_notes_to_clip` replaces the clip's notes. Use `edit_notes` to add or remove a
   few without touching the rest.
 - Placing a session clip into the arrangement overwrites whatever is under it, which

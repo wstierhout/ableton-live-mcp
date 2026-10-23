@@ -18,7 +18,7 @@ For live work, read `get_session_info` and relevant track/device state first.
 For saved-file analysis, use `als_summary`, `als_lint` or `als_diff`; Live can stay
 closed. Ask for the file if its path is not provided. Never upload the set yourself.
 
-Setup is separate from tool use: `uvx mcp-server-ableton-live@1.8.1 install` copies
+Setup is separate from tool use: `uvx mcp-server-ableton-live@2.0.0rc1 install` copies
 the Remote Script; it must not appear in the MCP launch arguments. A custom User
 Library uses `--user-library`. An existing different script requires review and
 explicit `--replace`, which keeps a backup. Restart Live, select AbletonMCP as
@@ -31,8 +31,14 @@ Do not auto-replace a bridge, change client config or enable a second port-9877 
 - Musical time is beats, not seconds. Faders are normalized, not dB; 0.85 is unity.
 - Read device parameter ranges/display first. Numbers use native values; strings
   such as `250 Hz` request a bounded display conversion, which can refuse unsupported
-  mappings. Read the returned display and warnings; do not invent a conversion curve.
+  mappings. Numeric strings such as `"0.5"` mean native units. Read the returned
+  display and warnings; do not invent a conversion curve. Top-level and rack
+  setters share the same conversion rules.
 - `add_notes_to_clip` replaces all notes. Use `edit_notes` for incremental edits.
+- `write_automation` replaces one Session clip parameter envelope. Points hold
+  until the next point or clip end unless a positive duration is supplied; ramps
+  are stepped. Verify with `read_automation`, sampling just after boundaries when
+  needed. The reader returns sampled values, not the original control points.
 - `duplicate_to_arrangement` overwrites the overlapping destination. Confirm the
   target/range for replacements or deletions; prefer a disposable set for exploration.
 - Use `batch_commands` for an approved related edit when useful for a single undo
@@ -43,9 +49,15 @@ Do not auto-replace a bridge, change client config or enable a second port-9877 
 
 ## Verify and report
 
-Read the changed clips, parameters or session state after writing. Transport replies
-can describe the prior state. `session_diff` compares successive snapshots; establish
-a baseline before the edit. Report the observed result and any unverified part.
+Read the changed clips, parameters or session state after writing. Transport
+replies include `requested`, `observed` and `confirmed`; wait for `confirmed=true`
+before dependent work. Read successful JSON from `structuredContent.data`; failures
+set `isError=true` and include `structuredContent.error`, sometimes with completed
+steps and an operation ID. Inspect the retained mutation receipt via
+`get_session_info(operation_id=...)` after an uncertain reply, and inspect current
+state if the receipt has expired. Do not replay an edit merely because it timed out.
+`session_diff` compares successive snapshots; establish a baseline before the edit.
+Report the observed result and any unverified part.
 
 `analyze_mix` is a session-state heuristic, not measured audio. `analyze_audio_file`
 measures local WAV (integer/float), AIFF, FLAC, Ogg, MP3, AAC and M4A sample peak/RMS

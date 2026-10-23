@@ -1,6 +1,6 @@
 {
   "name": "ableton-live",
-  "version": "1.8.1",
+  "version": "2.0.0-rc.1",
   "description": "Independent AbletonMCP integration for local Codex clients: typed music tools and a verify-after-edit workflow.",
   "author": {
     "name": "Wouter Stierhout",

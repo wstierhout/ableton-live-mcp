@@ -34,7 +34,7 @@ from _Framework.ControlSurface import ControlSurface
 DEFAULT_PORT = int(os.environ.get("ABLETON_MCP_PORT", "9877"))
 HOST = os.environ.get("ABLETON_MCP_HOST", "127.0.0.1")
 MAX_REQUEST_BYTES = 10 * 1024 * 1024  # backstop against a poisoned request buffer
-BRIDGE_VERSION = "1.8.1"
+BRIDGE_VERSION = "2.0.0rc1"
 BRIDGE_PROTOCOL = 2
 
 
@@ -127,17 +127,22 @@ def _fits_receipt(value, byte_limit=65536, node_limit=1024):
     return visit(value, 0)
 
 
-def _display_number(text):
-    match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(Hz|kHz|ms|s|dB|%)\s*", str(text), re.I)
+def _display_number(text, allow_infinite=False):
+    # Live and plug-ins can render minus/infinity with Unicode characters.
+    text = str(text).replace("\u2212", "-").replace("\u221e", "inf")
+    match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+|inf))\s*(Hz|kHz|ms|s|dB|%)\s*", text, re.I)
     if not match:
         raise ValueError("Use a native number, exact enum label, or Hz/kHz/ms/s/dB/% display text")
-    value, unit = float(match.group(1)), match.group(2).lower()
+    token, unit = match.group(1), match.group(2).lower()
+    value = float(token)
+    explicit_infinity = token.lstrip("+-").lower() == "inf"
     if unit == "khz":
         value, unit = value * 1000, "hz"
     elif unit == "s":
         value, unit = value * 1000, "ms"
-    if not math.isfinite(value):
-        raise ValueError("Display value must be finite")
+    # Infinity represents a displayed gain endpoint, never numeric overflow.
+    if not math.isfinite(value) and not (allow_infinite and explicit_infinity and unit == "db"):
+        raise ValueError("Display value must be finite, except explicit +/-inf dB endpoints")
     return value, unit
 
 
@@ -146,6 +151,31 @@ def _parameter_value(param, requested):
     low, high = float(param.min), float(param.max)
     if not math.isfinite(low) or not math.isfinite(high) or low > high:
         raise ValueError("Invalid parameter range")
+    numeric = False
+    native_text = None
+    if isinstance(requested, str):
+        native_text = requested.replace("\u2212", "-")
+        numeric = re.fullmatch(
+            r"\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*", native_text) is not None
+        if param.is_quantized:
+            if high - low > 512:
+                # Numeric strings could also be labels; require a real number
+                # rather than silently choosing an uninspected interpretation.
+                raise ValueError("Enum range too large; use a native numeric value")
+            matches = [v for v in range(math.ceil(low), math.floor(high) + 1)
+                       if param.str_for_value(v).strip().casefold() == requested.strip().casefold()]
+            if len(matches) > 1:
+                raise ValueError("Display label is missing or ambiguous; use a native value")
+            if matches:
+                warning = None
+                if numeric and float(native_text) != matches[0]:
+                    warning = ("matched the label " + repr(requested.strip()) + " (native "
+                               + str(matches[0]) + "); send a native index to choose by position")
+                return matches[0], warning
+            if not numeric:
+                raise ValueError("Display label is missing or ambiguous; use a native value")
+        if numeric:
+            requested = float(native_text)
     if not isinstance(requested, str):
         raw = float(requested)
         if not math.isfinite(raw):
@@ -154,44 +184,170 @@ def _parameter_value(param, requested):
         if param.is_quantized:
             clamped = max(low, min(high, math.floor(clamped + 0.5)))
         return clamped, "clamped or quantized to native range" if clamped != raw else None
-    if param.is_quantized:
-        if high - low > 512:
-            raise ValueError("Enum range too large; use a native numeric value")
-        matches = [v for v in range(math.ceil(low), math.floor(high) + 1)
-                   if param.str_for_value(v).strip().casefold() == requested.strip().casefold()]
-        if len(matches) != 1:
-            raise ValueError("Display label is missing or ambiguous; use a native value")
-        return matches[0], None
-    target, unit = _display_number(requested)
-    samples = []
+    target, unit = _display_number(requested, allow_infinite=True)
+    samples, candidates = [], []
     for i in range(9):
-        raw = low + (high - low) * i / 8
-        display, found_unit = _display_number(param.str_for_value(raw))
+        fraction = i / 8
+        raw = low * (1 - fraction) + high * fraction
+        display, found_unit = _display_number(param.str_for_value(raw), allow_infinite=True)
         if found_unit != unit:
             raise ValueError("Requested unit does not match this parameter")
         samples.append(display)
+        if math.isfinite(display) and math.isfinite(target):
+            candidates.append((abs(display - target), raw))
     ascending = samples[-1] > samples[0]
     if samples[-1] == samples[0] or any(
         (b < a if ascending else b > a) for a, b in zip(samples, samples[1:])
     ):
         raise ValueError("Display mapping is not monotonic; use a native numeric value")
+    if math.isinf(target):
+        if target == samples[0]:
+            return low, None
+        if target == samples[-1]:
+            return high, None
+        raise ValueError("Neither end of this parameter's range displays that value")
     if not min(samples) <= target <= max(samples):
         raise ValueError("Display value is outside the parameter range; no change made")
-    candidates = []
+    lower_display, upper_display = samples[0], samples[-1]
     for _ in range(32):
-        raw = (low + high) / 2
-        display, found_unit = _display_number(param.str_for_value(raw))
+        raw = low / 2 + high / 2
+        display, found_unit = _display_number(param.str_for_value(raw), allow_infinite=True)
         if found_unit != unit:
             raise ValueError("Display unit changes across the range; use a native value")
-        candidates.append((abs(display - target), raw))
+        if not min(lower_display, upper_display) <= display <= max(lower_display, upper_display):
+            raise ValueError("Display mapping is not monotonic; use a native numeric value")
+        if math.isfinite(display):
+            candidates.append((abs(display - target), raw))
         if (display < target) == ascending:
-            low = raw
+            low, lower_display = raw, display
         else:
-            high = raw
-    error, raw = min(candidates)
+            high, upper_display = raw, display
+    error, raw = min(candidates) if candidates else (math.inf, low)
     if error > max(abs(target) * 0.005, 0.01):
         raise ValueError("Cannot resolve requested display value reliably; use a native value")
     return raw, "display conversion is approximate; check returned display"
+
+AUTOMATION_RAMP_STEP = 0.0625
+MAX_AUTOMATION_STEPS = 4096
+MAX_AUTOMATION_SAMPLES = 1024
+
+
+def _automation_number(value, label):
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise ValueError(label + " must be a finite number")
+    return float(value)
+
+
+def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
+                      hold_until=None, value_range=None):
+    """Validate before editing. v2 points hold to the next point or clip end."""
+    if mode not in ("points", "ramp"):
+        raise ValueError("mode must be points or ramp")
+    if not isinstance(points, list) or not 1 <= len(points) <= MAX_AUTOMATION_STEPS:
+        raise ValueError("points must contain 1 to 4096 objects")
+    spacing = _automation_number(step_length, "step_length")
+    if not 0 < spacing <= 4:
+        raise ValueError("step_length must be greater than 0 and at most 4 beats")
+    end = None if hold_until is None else _automation_number(hold_until, "clip end")
+    if end is not None and end <= 0:
+        raise ValueError("clip end must be positive")
+    parsed = []
+    for i, point in enumerate(points):
+        if not isinstance(point, dict) or set(point) - {"time", "value", "duration"}:
+            raise ValueError("Each point must contain time, value and optional duration")
+        t = _automation_number(point.get("time"), "point time")
+        value = _automation_number(point.get("value"), "point value")
+        duration = point.get("duration")
+        if "duration" in point:
+            duration = _automation_number(duration, "duration")
+            if duration <= 0:
+                raise ValueError("duration must be positive")
+        if t < 0 or end is not None and t > end:
+            raise ValueError("point time must be within the clip")
+        if value_range is not None and not value_range[0] <= value <= value_range[1]:
+            raise ValueError("Automation value is outside the parameter range")
+        if parsed and (t < parsed[-1][0] or mode == "points" and t == parsed[-1][0]):
+            raise ValueError("points must be in time order; points mode needs unique times")
+        parsed.append((t, value, duration))
+    if mode == "ramp" and len(parsed) < 2:
+        raise ValueError("ramp mode needs at least two points")
+    for i, (t, _, duration) in enumerate(parsed):
+        bound = parsed[i + 1][0] if i + 1 < len(parsed) else end
+        if duration is not None:
+            if mode == "ramp" and i + 1 < len(parsed):
+                raise ValueError("Only the last ramp point may have a duration")
+            if not math.isfinite(t + duration) or bound is not None and t + duration > bound:
+                raise ValueError("duration overlaps the next point or extends beyond the clip")
+    if mode == "points":
+        steps = []
+        for i, (t, value, duration) in enumerate(parsed):
+            bound = parsed[i + 1][0] if i + 1 < len(parsed) else end
+            if duration is None:
+                duration = max(0.0, bound - t) if bound is not None else 0.0
+            if duration > 0:
+                steps.append((t, duration, value))
+        return steps
+    segments = []
+    total = 0
+    for (t0, v0, _), (t1, v1, _) in zip(parsed, parsed[1:]):
+        span = t1 - t0
+        if span <= 0:
+            continue
+        ratio = span / spacing
+        if not math.isfinite(ratio) or ratio > MAX_AUTOMATION_STEPS:
+            raise ValueError("Ramp exceeds 4096 steps; use a larger step_length")
+        count = max(1, int(math.ceil(ratio - 1e-9)))
+        segments.append([t0, v0, t1, v1, count])
+        total += count
+    if segments:
+        total += max(0, 2 - segments[-1][4])
+        segments[-1][4] = max(2, segments[-1][4])
+    last_time, last_value, last_duration = parsed[-1]
+    if last_duration is None:
+        last_duration = max(0.0, end - last_time) if end is not None else 0.0
+    total += int(last_duration > 0)
+    if total > MAX_AUTOMATION_STEPS:
+        raise ValueError("Ramp exceeds 4096 steps; use a larger step_length")
+    steps = []
+    for i, (t0, v0, t1, v1, count) in enumerate(segments):
+        divisor = count - 1 if i == len(segments) - 1 else count
+        for k in range(count):
+            t = t0 + (t1 - t0) * k / count
+            stop = t1 if k + 1 == count else t0 + (t1 - t0) * (k + 1) / count
+            value = v1 if k == divisor else v0 + (v1 - v0) * k / divisor
+            steps.append((t, stop - t, value))
+    if last_duration > 0:
+        steps.append((last_time, last_duration, last_value))
+    return steps
+
+
+def _automation_sample_times(times=None, start=None, end=None, step=None, clip_end=None):
+    """Bound allocations and validate all requested times before reading Live."""
+    if times is not None:
+        if any(v is not None for v in (start, end, step)):
+            raise ValueError("Use explicit times or a start/end/step grid, not both")
+        if not isinstance(times, list) or not 1 <= len(times) <= MAX_AUTOMATION_SAMPLES:
+            raise ValueError("times must contain 1 to 1024 samples")
+        samples = [_automation_number(t, "sample time") for t in times]
+    else:
+        first = 0.0 if start is None else _automation_number(start, "start")
+        last = clip_end if end is None else _automation_number(end, "end")
+        spacing = 1.0 if step is None else _automation_number(step, "step")
+        if spacing <= 0 or first < 0 or last is not None and last < first:
+            raise ValueError("Need step > 0 and end >= start >= 0")
+        if last is None:
+            return []  # static batch preflight; the clip supplies its end at execution
+        ratio = (last - first) / spacing
+        if not math.isfinite(ratio) or ratio >= MAX_AUTOMATION_SAMPLES:
+            raise ValueError("At most 1024 samples; use a larger step or shorter range")
+        count = int(math.floor(ratio + 1e-9)) + 1
+        if count > MAX_AUTOMATION_SAMPLES:
+            raise ValueError("At most 1024 samples")
+        samples = [first + i * spacing for i in range(count)]
+    if any(t < 0 or clip_end is not None and t > clip_end for t in samples):
+        raise ValueError("sample times must be within the clip")
+    return samples
+
 
 def create_instance(c_instance):
     """Create and return the AbletonMCP script instance"""
@@ -479,7 +635,7 @@ class AbletonMCP(ControlSurface):
         "set_return_device_parameter": lambda s, p: s._set_device_parameter(s._req(p, "return_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "value"), track_type="return"),
         "set_master_device_parameter": lambda s, p: s._set_device_parameter(0, s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "value"), track_type="master"),
         "set_device_enabled": lambda s, p: s._set_device_enabled(s._req(p, "track_index"), s._req(p, "device_index"), p.get("enabled", True)),
-        "write_automation": lambda s, p: s._write_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "points")),
+        "write_automation": lambda s, p: s._write_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), s._req(p, "points"), p.get("mode", "points"), p.get("step_length", AUTOMATION_RAMP_STEP)),
         "clear_automation": lambda s, p: s._clear_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter")),
         "switch_to_arrangement_view": lambda s, p: s._switch_to_arrangement_view(),
         "set_current_song_time": lambda s, p: s._set_current_song_time(p.get("time", 0.0)),
@@ -558,6 +714,7 @@ class AbletonMCP(ControlSurface):
         "get_group_info": lambda s, p: s._get_group_info(s._req(p, "track_index")),
         "get_device_routing": lambda s, p: s._get_device_routing(s._req(p, "track_index"), s._req(p, "device_index")),
         "get_scale_info": lambda s, p: s._get_scale_info(),
+        "read_automation": lambda s, p: s._read_automation(s._req(p, "track_index"), s._req(p, "clip_index"), s._req(p, "device_index"), s._req(p, "parameter"), p.get("times"), p.get("start"), p.get("end"), p.get("step")),
     }
 
     # One merged lookup view; the two source dicts document intent.
@@ -756,7 +913,7 @@ class AbletonMCP(ControlSurface):
             "bridge_version": BRIDGE_VERSION,
             "bridge_protocol": BRIDGE_PROTOCOL,
             "capabilities": ["batch_preflight", "confirmed_transport", "confirmed_locator",
-                             "chain_display_values", "operation_receipts", "stable_track_guards", "bulk_session_notes"],
+                             "automation_v2", "automation_readback", "chain_display_values", "operation_receipts", "stable_track_guards", "bulk_session_notes"],
         }
         return result
 
@@ -1439,31 +1596,107 @@ class AbletonMCP(ControlSurface):
                 return p
         raise Exception("Parameter not found: " + str(parameter))
 
-    def _write_automation(self, track_index, clip_index, device_index, parameter, points):
-        points = self._prepare_events(points, "points")
+    @staticmethod
+    def _automation_clip_end(clip):
+        ends = []
+        for name in ("end_marker", "loop_end", "length"):
+            value = getattr(clip, name, None)
+            if type(value) in (int, float) and math.isfinite(value) and value > 0:
+                ends.append(float(value))
+        if not ends:
+            raise ValueError("Cannot determine the clip's finite end")
+        return max(ends)
+
+    def _write_automation(self, track_index, clip_index, device_index, parameter, points,
+                          mode="points", step_length=AUTOMATION_RAMP_STEP):
         clip = self._get_clip(track_index, clip_index)
         device = self._get_device(track_index, device_index)
         param = self._resolve_parameter(device, parameter)
-        if any(not param.min <= pt["value"] <= param.max for pt in points):
-            raise ValueError("Automation values must be within the parameter's native range")
-        # Live only creates a clip envelope for the currently-viewed detail clip.
-        try:
-            self._song.view.detail_clip = clip
-        except Exception:
-            pass
-        clip.clear_envelope(param)
+        steps = _automation_steps(points, mode, step_length, self._automation_clip_end(clip),
+                                  (float(param.min), float(param.max)))
+        if not steps:
+            raise ValueError("Automation must contain a positive-duration step inside the clip")
+        if not getattr(param, "is_enabled", True):
+            raise ValueError("Parameter is disabled; no automation changed")
+        previous = clip.automation_envelope(param)
+        if previous is None and not hasattr(clip, "create_automation_envelope"):
+            raise ValueError("This Live build cannot create an automation envelope")
+        start_value = steps[0][2] if mode == "ramp" and steps[0][0] == 0 else None
+
+        def write():
+            try:
+                self._song.view.detail_clip = clip
+            except Exception:
+                pass
+            clip.clear_envelope(param)
+            env = clip.automation_envelope(param)
+            if env is None:
+                env = clip.create_automation_envelope(param)
+            if env is None or not hasattr(env, "insert_step"):
+                raise ValueError("Automation envelope unavailable after clearing; inspect Live and Undo")
+            for t, duration, value in steps:
+                env.insert_step(t, duration, value)
+            settled = None
+            if start_value is not None and hasattr(env, "value_at_time"):
+                tolerance = 1e-5 * max(1.0, abs(float(param.max) - float(param.min)))
+                settled = abs(float(env.value_at_time(0.0)) - start_value) <= tolerance
+            result = {"parameter": param.name, "device": device.name, "mode": mode,
+                      "point_count": len(points), "step_count": len(steps),
+                      "start_value_set": start_value, "start_settled": settled,
+                      "start": steps[0][0], "end": max(t + d for t, d, _ in steps)}
+            if start_value is not None and settled is not True:
+                result["warning"] = "Beat-zero readback is unconfirmed; inspect playback. The edit was not retried."
+            return result
+        if start_value is None:
+            return write()
+        # One operation and one envelope write. Wait on later Live ticks before
+        # creating the envelope, rather than reissuing a destructive command.
+        param.value = start_value
+        def start(finish):
+            deadline = time.monotonic() + 2.0
+            attempts = [0]
+            def settle():
+                try:
+                    attempts[0] += 1
+                    tolerance = 1e-5 * max(1.0, abs(float(param.max) - float(param.min)))
+                    if abs(float(param.value) - start_value) <= tolerance:
+                        finish(result=write())
+                    elif time.monotonic() >= deadline or attempts[0] >= 120:
+                        raise CommandFailure("Ramp start did not settle; parameter may have changed but envelope was not replaced",
+                                             {"may_have_applied": True, "envelope_replaced": False})
+                    else:
+                        self.schedule_message(1, settle)
+                except Exception as exc:
+                    finish(error=exc)
+            self.schedule_message(1, settle)
+        return _Deferred(start)
+
+    def _read_automation(self, track_index, clip_index, device_index, parameter,
+                         times=None, start=None, end=None, step=None):
+        clip = self._get_clip(track_index, clip_index)
+        device = self._get_device(track_index, device_index)
+        param = self._resolve_parameter(device, parameter)
+        requested = _automation_sample_times(times, start, end, step, self._automation_clip_end(clip))
+        result = {"parameter": param.name, "device": device.name,
+                  "min": float(param.min), "max": float(param.max), "current_value": float(param.value)}
         env = clip.automation_envelope(param)
-        if env is None and hasattr(clip, "create_automation_envelope"):
-            env = clip.create_automation_envelope(param)
         if env is None:
-            raise Exception(
-                "Automation envelope unavailable for '{}' on '{}' (class={}). "
-                "This Live build may not support clip automation for this parameter.".format(
-                    param.name, device.name, getattr(device, "class_name", "?")))
-        for pt in points:
-            env.insert_step(float(pt["time"]), 0.0, float(pt["value"]))
-        return {"parameter": param.name, "point_count": len(points),
-                "device": device.name}
+            result.update(has_envelope=False, samples=[])
+            return result
+        if not hasattr(env, "value_at_time"):
+            raise ValueError("AutomationEnvelope.value_at_time is not available in this Live version")
+        samples = []
+        for t in requested:
+            value = _automation_number(env.value_at_time(t), "envelope value")
+            sample = {"time": t, "value": value}
+            try:
+                sample["display"] = str(param.str_for_value(value))
+            except Exception:
+                pass
+            samples.append(sample)
+        result.update(has_envelope=True, samples=samples)
+        return result
+
 
     def _clear_automation(self, track_index, clip_index, device_index, parameter):
         clip = self._get_clip(track_index, clip_index)
@@ -1688,7 +1921,7 @@ class AbletonMCP(ControlSurface):
                     raise ValueError(key + " must be a finite number")
             if key in ("length", "region_length", "record_length") and value <= 0:
                 raise ValueError(key + " must be positive")
-            if key in ("pitch", "transposition_amount", "warp_mode", "mode") and type(value) is not int:
+            if key in ("pitch", "transposition_amount", "warp_mode") and type(value) is not int:
                 raise ValueError(key + " must be an integer")
             if key in ("time", "start", "destination_time", "region_start", "loop_start", "loop_end", "start_marker", "end_marker") and value < 0:
                 raise ValueError(key + " cannot be negative")
@@ -1751,7 +1984,16 @@ class AbletonMCP(ControlSurface):
                         raise ValueError("Missing region argument: " + key)
             self._validate_batch_values(nested)
             params["params"] = nested
-        self._validate_batch_values(params)
+        automation = ctype in ("write_automation", "read_automation")
+        if automation:
+            common = {k: v for k, v in params.items() if k not in ("mode", "step_length", "times", "start", "end", "step")}
+            self._validate_batch_values(common)
+            if ctype == "write_automation":
+                _automation_steps(params.get("points"), params.get("mode", "points"), params.get("step_length", AUTOMATION_RAMP_STEP))
+            else:
+                _automation_sample_times(params.get("times"), params.get("start"), params.get("end"), params.get("step"))
+        else:
+            self._validate_batch_values(params)
         # Bind exactly the same dispatch lambda as execution, but to a probe
         # whose methods have no Live access. Required-argument checks cannot drift.
         probe = _ProbeParams(params)
@@ -1779,7 +2021,7 @@ class AbletonMCP(ControlSurface):
         return {"type": ctype, "original_type": original, "params": params}
 
     def _batch(self, commands):
-        """Preflight all commands, then stop on the first runtime failure. No rollback."""
+        """Preflight all commands, then sequence sync/deferred results. No rollback."""
         if not isinstance(commands, list) or not 1 <= len(commands) <= 128:
             raise ValueError("Batch must contain 1 to 128 commands")
         normalized = []
@@ -1792,25 +2034,52 @@ class AbletonMCP(ControlSurface):
                                       "failed_step": index + 1, "completed_count": 0,
                                       "completed_results": [], "command": command,
                                       "may_have_applied": False})
-        results = []
-        self._song.begin_undo_step()
-        try:
-            for index, command in enumerate(normalized):
+        def start(finish):
+            results = []
+            closed = [False]
+            self._song.begin_undo_step()
+            def complete(result=None, error=None):
+                if closed[0]:
+                    return
+                closed[0] = True
                 try:
-                    params = self._guard_target(command["params"])
-                    result = self._ALL_COMMANDS[command["type"]](self, params)
-                    results.append({"type": command["type"], "original_type": command["original_type"], "result": result})
+                    self._song.end_undo_step()
                 except Exception as exc:
-                    details = dict(getattr(exc, "details", {}))
-                    details.update({"phase": "execution", "failed_index": index,
-                                    "failed_step": index + 1, "command": command,
-                                    "completed_count": len(results), "completed_results": results,
-                                    "may_have_applied": bool(results) or details.get("may_have_applied", True)})
-                    raise CommandFailure(f"Batch failed at step {index + 1} of {len(commands)}: {exc}. Completed edits were not rolled back.",
-                                         details)
-        finally:
-            self._song.end_undo_step()
-        return {"executed": len(results), "results": results}
+                    error = error or exc
+                finish(result=result, error=error)
+            def failed(index, command, exc):
+                details = dict(getattr(exc, "details", {}))
+                details.update({"phase": "execution", "failed_index": index,
+                                "failed_step": index + 1, "command": command,
+                                "completed_count": len(results), "completed_results": results,
+                                "may_have_applied": bool(results) or details.get("may_have_applied", True)})
+                complete(error=CommandFailure(
+                    f"Batch failed at step {index + 1} of {len(commands)}: {exc}. Completed edits were not rolled back.", details))
+            def advance(index):
+                while index < len(normalized):
+                    command = normalized[index]
+                    try:
+                        params = self._guard_target(command["params"])
+                        result = self._ALL_COMMANDS[command["type"]](self, params)
+                        if isinstance(result, _Deferred):
+                            def resumed(result=None, error=None, index=index, command=command):
+                                if closed[0]:
+                                    return
+                                if error is not None:
+                                    failed(index, command, error)
+                                else:
+                                    results.append({"type": command["type"], "original_type": command["original_type"], "result": result})
+                                    advance(index + 1)
+                            result.start(resumed)
+                            return
+                        results.append({"type": command["type"], "original_type": command["original_type"], "result": result})
+                    except Exception as exc:
+                        failed(index, command, exc)
+                        return
+                    index += 1
+                complete(result={"executed": len(results), "results": results})
+            advance(0)
+        return _Deferred(start)
 
     # -- browser search by display name --
     _SCAN_TICK_SECONDS = 0.005
@@ -1971,6 +2240,8 @@ class AbletonMCP(ControlSurface):
                 raise ValueError(kind + " entries must be objects")
             if kind == "points":
                 event = {key: item.get(key) for key in ("time", "value")}
+                if "duration" in item:
+                    event["duration"] = item["duration"]
             elif kind == "remove":
                 event = {key: item.get(key) for key in ("pitch", "start_time")}
             else:
@@ -2513,11 +2784,6 @@ class AbletonMCP(ControlSurface):
         if not param.is_enabled:
             raise ValueError("Parameter is disabled: " + param.name)
         requested = value
-        if isinstance(value, str):
-            try:
-                value = float(value)
-            except ValueError:
-                pass
         native, warning = _parameter_value(param, value)
         param.value = native
         result = {"device": device.name, "parameter": param.name, "value": param.value,

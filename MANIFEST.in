@@ -1,6 +1,7 @@
 include CHANGELOG.md SECURITY.md CONTRIBUTING.md
+include docs/MIGRATION-2.0.md docs/WINDOWS-CANDIDATE-TESTING.md
 include manifest.json server.json glama.json
-include scripts/export_tool_catalog.py
+include scripts/export_tool_catalog.py scripts/test-windows-candidate.ps1
 prune plugins
 exclude RELEASE_CHECKLIST.md
 exclude scripts/package_plugin.py

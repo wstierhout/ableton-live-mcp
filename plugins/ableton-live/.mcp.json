@@ -2,7 +2,7 @@
   "mcpServers": {
     "ableton": {
       "command": "uvx",
-      "args": ["mcp-server-ableton-live@1.8.1"]
+      "args": ["mcp-server-ableton-live@2.0.0rc1"]
     }
   }
 }

@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.wstierhout/ableton-live-mcp",
   "title": "Ableton Live MCP Server",
-  "description": "Control Ableton Live with 156 typed tools for music production and offline .als analysis.",
+  "description": "Control Ableton Live with 157 typed tools for music production and offline .als analysis.",
   "websiteUrl": "https://abletonmcp.com",
   "repository": {
     "url": "https://github.com/wstierhout/ableton-live-mcp",
     "source": "github"
   },
-  "version": "1.8.1",
+  "version": "2.0.0-rc.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-server-ableton-live",
-      "version": "1.8.1",
+      "version": "2.0.0rc1",
       "transport": { "type": "stdio" }
     }
   ]

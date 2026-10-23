@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased — reliability and performance
+## 2.0.0rc1 — unreleased candidate
+
+This candidate has not been published. Automated and real Live validation remain
+release gates; prior-version check results do not establish this candidate's status.
+See [Migration to 2.0](docs/MIGRATION-2.0.md) for client and bridge requirements.
+
+- Adapt the contributions from [#4](https://github.com/wstierhout/ableton-live-mcp/pull/4)
+  and [#5](https://github.com/wstierhout/ableton-live-mcp/pull/5) to the 2.0 bridge:
+  write clip envelopes with positive step durations, optional explicit duration,
+  and bounded linear/exponential ramps; add `read_automation` for bounded sample
+  readback. The complete catalog now contains 157 tools.
+- Combine overlapping parameter conversion fixes from
+  [#6](https://github.com/wstierhout/ableton-live-mcp/pull/6) and
+  [#7](https://github.com/wstierhout/ableton-live-mcp/pull/7): native numeric strings,
+  supported dB displays, quantized labels, and shared top-level/rack conversion.
+  Readback and warnings remain part of the result.
+- Defer [#8](https://github.com/wstierhout/ableton-live-mcp/pull/8), which adds
+  Arrangement automation by rebuilding clips. Its preservation and safety behavior
+  require a separate review; those tools are not included in this release candidate.
+
+### Reliability and performance
 
 - Validate complete note/automation payloads before deleting content, including
   legacy note replacement. Browser failures stop batches and expose partial edits.

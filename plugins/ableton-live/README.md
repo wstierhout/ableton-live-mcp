@@ -8,10 +8,10 @@ not silently install the Remote Script, add account configuration, or start Live
 
 ## Requirements and setup
 
-Install uv. After **mcp-server-ableton-live 1.8.1 has been published**:
+Install uv. After **mcp-server-ableton-live 2.0.0rc1 has been published**:
 
 ```sh
-uvx mcp-server-ableton-live@1.8.1 install
+uvx mcp-server-ableton-live@2.0.0rc1 install
 ```
 
 **Required: activate the bridge in Ableton Live.** Installing the Codex plugin does
@@ -32,7 +32,7 @@ the MIDI section.
 With Live running, check the connection:
 
 ```sh
-uvx mcp-server-ableton-live@1.8.1 doctor --json
+uvx mcp-server-ableton-live@2.0.0rc1 doctor --json
 ```
 
 Look for `"ok": true`. Relocated libraries accept `--user-library "/path/to/User Library"`
@@ -48,7 +48,7 @@ at the same time. Disabling the plugin leaves your music and Remote Script intac
 For direct MCP setup without installing the plugin:
 
 ```sh
-codex mcp add ableton -- uvx mcp-server-ableton-live@1.8.1
+codex mcp add ableton -- uvx mcp-server-ableton-live@2.0.0rc1
 codex mcp list
 ```
 
