@@ -12,7 +12,6 @@ import pytest
 
 from ableton_live_mcp.tools import arrangement, session
 
-
 TARGET = {"track_index": 0, "clip_index": 0, "device_index": 0, "parameter": "Gain"}
 
 

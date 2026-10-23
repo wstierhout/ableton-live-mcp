@@ -178,7 +178,9 @@ def test_display_numeric_overflow_cannot_impersonate_an_infinite_endpoint(bridge
     assert param.writes == []
 
 
-@pytest.mark.parametrize("display", [lambda value: f"{math.sin(value * 6.28)} Hz", lambda _: "1 Hz"])
+@pytest.mark.parametrize(
+    "display", [lambda value: f"{math.sin(value * 6.28)} Hz", lambda _: "1 Hz"]
+)
 def test_nonmonotonic_or_constant_displays_still_fail_without_writing(bridge_module, display):
     param = Parameter(0, 1, display)
     with pytest.raises(ValueError, match="not monotonic"):
@@ -188,7 +190,9 @@ def test_nonmonotonic_or_constant_displays_still_fail_without_writing(bridge_mod
 
 def configure_bridge(bridge, param):
     device = SimpleNamespace(name="Fixture", parameters=[param])
-    rack = SimpleNamespace(name="Rack", can_have_chains=True, chains=[SimpleNamespace(devices=[device])])
+    rack = SimpleNamespace(
+        name="Rack", can_have_chains=True, chains=[SimpleNamespace(devices=[device])]
+    )
     bridge._song.tracks = [SimpleNamespace(devices=[device, rack])]
     bridge._song.return_tracks = [SimpleNamespace(devices=[device])]
     bridge._song.master_track = SimpleNamespace(devices=[device])
@@ -246,9 +250,7 @@ def test_all_device_locations_share_gain_conversion(bridge, command, indices, re
 def test_ambiguous_label_is_rejected_at_every_location_before_any_write(bridge, command, indices):
     param = enum(["8", "8"])
     configure_bridge(bridge, param)
-    response = bridge.dispatch(
-        {"type": command, "params": dict(indices, parameter=0, value="8")}
-    )
+    response = bridge.dispatch({"type": command, "params": dict(indices, parameter=0, value="8")})
     assert response["status"] == "error"
     assert "ambiguous" in response["message"]
     assert param.writes == []
