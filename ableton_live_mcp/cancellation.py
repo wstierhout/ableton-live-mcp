@@ -15,6 +15,7 @@ READ_COMMANDS = frozenset(
         "get_return_tracks",
         "get_arrangement_clips",
         "get_clip_notes",
+        "read_automation",
         "get_grooves",
         "get_device_parameters",
         "get_return_device_parameters",

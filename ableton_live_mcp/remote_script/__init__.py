@@ -251,6 +251,12 @@ def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
     end = None if hold_until is None else _automation_number(hold_until, "clip end")
     if end is not None and end <= 0:
         raise ValueError("clip end must be positive")
+    if value_range is not None:
+        low = _automation_number(value_range[0], "parameter minimum")
+        high = _automation_number(value_range[1], "parameter maximum")
+        if low > high:
+            raise ValueError("Invalid parameter range")
+        value_range = (low, high)
     parsed = []
     for i, point in enumerate(points):
         if not isinstance(point, dict) or set(point) - {"time", "value", "duration"}:
@@ -276,7 +282,7 @@ def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
         if duration is not None:
             if mode == "ramp" and i + 1 < len(parsed):
                 raise ValueError("Only the last ramp point may have a duration")
-            if not math.isfinite(t + duration) or bound is not None and t + duration > bound:
+            if not math.isfinite(t + duration) or t + duration <= t or bound is not None and t + duration > bound:
                 raise ValueError("duration overlaps the next point or extends beyond the clip")
     if mode == "points":
         steps = []
@@ -305,6 +311,8 @@ def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
     last_time, last_value, last_duration = parsed[-1]
     if last_duration is None:
         last_duration = max(0.0, end - last_time) if end is not None else 0.0
+    if end is not None and last_duration == 0 and len(parsed) > 1 and parsed[-2][0] == last_time:
+        raise ValueError("A jump at clip end cannot have a positive hold; move it inside the clip")
     total += int(last_duration > 0)
     if total > MAX_AUTOMATION_STEPS:
         raise ValueError("Ramp exceeds 4096 steps; use a larger step_length")
@@ -314,7 +322,10 @@ def _automation_steps(points, mode="points", step_length=AUTOMATION_RAMP_STEP,
         for k in range(count):
             t = t0 + (t1 - t0) * k / count
             stop = t1 if k + 1 == count else t0 + (t1 - t0) * (k + 1) / count
-            value = v1 if k == divisor else v0 + (v1 - v0) * k / divisor
+            fraction = k / divisor
+            value = v1 if k == divisor else v0 * (1 - fraction) + v1 * fraction
+            if stop <= t or not math.isfinite(value):
+                raise ValueError("Ramp resolution cannot be represented at these times/values")
             steps.append((t, stop - t, value))
     if last_duration > 0:
         steps.append((last_time, last_duration, last_value))
@@ -335,6 +346,8 @@ def _automation_sample_times(times=None, start=None, end=None, step=None, clip_e
         spacing = 1.0 if step is None else _automation_number(step, "step")
         if spacing <= 0 or first < 0 or last is not None and last < first:
             raise ValueError("Need step > 0 and end >= start >= 0")
+        if clip_end is not None and (first > clip_end or last is not None and last > clip_end):
+            raise ValueError("sample grid must be within the clip")
         if last is None:
             return []  # static batch preflight; the clip supplies its end at execution
         ratio = (last - first) / spacing
@@ -344,7 +357,11 @@ def _automation_sample_times(times=None, start=None, end=None, step=None, clip_e
         if count > MAX_AUTOMATION_SAMPLES:
             raise ValueError("At most 1024 samples")
         samples = [first + i * spacing for i in range(count)]
-    if any(t < 0 or clip_end is not None and t > clip_end for t in samples):
+        # Snap only an aligned final grid sample, never preceding samples or
+        # explicit user times. This avoids 0.1*3 exceeding an end of 0.3.
+        if abs(ratio - (count - 1)) <= 1e-9:
+            samples[-1] = last
+    if any(not math.isfinite(t) or t < 0 or clip_end is not None and t > clip_end for t in samples):
         raise ValueError("sample times must be within the clip")
     return samples
 
@@ -1598,14 +1615,16 @@ class AbletonMCP(ControlSurface):
 
     @staticmethod
     def _automation_clip_end(clip):
-        ends = []
+        # end_marker is the authoritative clip boundary. loop_end and length
+        # are fallbacks for older proxies, not reasons to extend past it.
         for name in ("end_marker", "loop_end", "length"):
             value = getattr(clip, name, None)
-            if type(value) in (int, float) and math.isfinite(value) and value > 0:
-                ends.append(float(value))
-        if not ends:
-            raise ValueError("Cannot determine the clip's finite end")
-        return max(ends)
+            if value is not None:
+                end = _automation_number(value, "clip end")
+                if end <= 0:
+                    raise ValueError("clip end must be positive")
+                return end
+        raise ValueError("Cannot determine the clip's finite end")
 
     def _write_automation(self, track_index, clip_index, device_index, parameter, points,
                           mode="points", step_length=AUTOMATION_RAMP_STEP):
@@ -1618,10 +1637,29 @@ class AbletonMCP(ControlSurface):
             raise ValueError("Automation must contain a positive-duration step inside the clip")
         if not getattr(param, "is_enabled", True):
             raise ValueError("Parameter is disabled; no automation changed")
-        previous = clip.automation_envelope(param)
-        if previous is None and not hasattr(clip, "create_automation_envelope"):
+        if not all(callable(getattr(clip, name, None)) for name in
+                   ("automation_envelope", "clear_envelope", "create_automation_envelope")):
             raise ValueError("This Live build cannot create an automation envelope")
-        start_value = steps[0][2] if mode == "ramp" and steps[0][0] == 0 else None
+        previous = clip.automation_envelope(param)
+        if previous is not None and not callable(getattr(previous, "insert_step", None)):
+            raise ValueError("This Live envelope does not support insert_step; no automation changed")
+        if getattr(param, "is_quantized", False):
+            if mode == "ramp" or any(float(point["value"]) != int(point["value"]) for point in points):
+                raise ValueError("Quantized parameters require integer points mode values; no automation changed")
+        start_value = steps[0][2] if steps[0][0] == 0 else None
+        prior_value = float(param.value)
+        prior_automation_state = int(getattr(param, "automation_state", 0))
+        if start_value is not None and prior_automation_state != 0:
+            raise ValueError("Beat-zero writes require inactive, non-overridden automation; stop playback and inspect automation_state before retrying. No automation changed")
+        if start_value is not None and getattr(self, "_batch_call", False):
+            raise ValueError("Beat-zero automation requires the standalone tool, outside a batch")
+        own_undo = not getattr(self, "_batch_call", False)
+        undo_open = [False]
+
+        def close_undo():
+            if undo_open[0]:
+                undo_open[0] = False
+                self._song.end_undo_step()
 
         def write():
             try:
@@ -1637,38 +1675,67 @@ class AbletonMCP(ControlSurface):
             for t, duration, value in steps:
                 env.insert_step(t, duration, value)
             settled = None
-            if start_value is not None and hasattr(env, "value_at_time"):
-                tolerance = 1e-5 * max(1.0, abs(float(param.max) - float(param.min)))
-                settled = abs(float(env.value_at_time(0.0)) - start_value) <= tolerance
+            readback_error = None
+            if start_value is not None and callable(getattr(env, "value_at_time", None)):
+                try:
+                    tolerance = 1e-5 * max(1.0, abs(float(param.max)), abs(float(param.min)))
+                    observed = _automation_number(env.value_at_time(0.0), "beat-zero readback")
+                    settled = abs(observed - start_value) <= tolerance
+                except Exception as exc:
+                    readback_error = str(exc)
             result = {"parameter": param.name, "device": device.name, "mode": mode,
                       "point_count": len(points), "step_count": len(steps),
                       "start_value_set": start_value, "start_settled": settled,
+                      "prior_value": prior_value, "prior_automation_state": prior_automation_state,
+                      "automation_state": int(getattr(param, "automation_state", 0)),
                       "start": steps[0][0], "end": max(t + d for t, d, _ in steps)}
             if start_value is not None and settled is not True:
                 result["warning"] = "Beat-zero readback is unconfirmed; inspect playback. The edit was not retried."
+                if readback_error:
+                    result["warning"] += " Readback unavailable: " + readback_error
             return result
+        if own_undo:
+            self._song.begin_undo_step()
+            undo_open[0] = True
         if start_value is None:
-            return write()
+            try:
+                return write()
+            finally:
+                close_undo()
         # One operation and one envelope write. Wait on later Live ticks before
         # creating the envelope, rather than reissuing a destructive command.
-        param.value = start_value
+        try:
+            param.value = start_value
+        except Exception:
+            close_undo()
+            raise
         def start(finish):
             deadline = time.monotonic() + 2.0
             attempts = [0]
             def settle():
                 try:
                     attempts[0] += 1
-                    tolerance = 1e-5 * max(1.0, abs(float(param.max) - float(param.min)))
-                    if abs(float(param.value) - start_value) <= tolerance:
-                        finish(result=write())
-                    elif time.monotonic() >= deadline or attempts[0] >= 120:
-                        raise CommandFailure("Ramp start did not settle; parameter may have changed but envelope was not replaced",
+                    tolerance = 1e-5 * max(1.0, abs(float(param.max)), abs(float(param.min)))
+                    if time.monotonic() >= deadline or attempts[0] >= 120:
+                        raise CommandFailure("Automation start did not settle before its deadline; parameter may have changed but envelope was not replaced",
                                              {"may_have_applied": True, "envelope_replaced": False})
+                    if abs(float(param.value) - start_value) <= tolerance:
+                        result = write()
+                        close_undo()
+                        finish(result=result)
                     else:
                         self.schedule_message(1, settle)
                 except Exception as exc:
+                    try:
+                        close_undo()
+                    except Exception:
+                        pass
                     finish(error=exc)
-            self.schedule_message(1, settle)
+            try:
+                self.schedule_message(1, settle)
+            except Exception as exc:
+                close_undo()
+                finish(error=exc)
         return _Deferred(start)
 
     def _read_automation(self, track_index, clip_index, device_index, parameter,
@@ -1990,6 +2057,8 @@ class AbletonMCP(ControlSurface):
             self._validate_batch_values(common)
             if ctype == "write_automation":
                 _automation_steps(params.get("points"), params.get("mode", "points"), params.get("step_length", AUTOMATION_RAMP_STEP))
+                if params["points"][0]["time"] == 0:
+                    raise ValueError("Beat-zero automation writes require the standalone tool, outside a batch")
             else:
                 _automation_sample_times(params.get("times"), params.get("start"), params.get("end"), params.get("step"))
         else:
@@ -2060,7 +2129,12 @@ class AbletonMCP(ControlSurface):
                     command = normalized[index]
                     try:
                         params = self._guard_target(command["params"])
-                        result = self._ALL_COMMANDS[command["type"]](self, params)
+                        previous_batch_call = getattr(self, "_batch_call", False)
+                        self._batch_call = True
+                        try:
+                            result = self._ALL_COMMANDS[command["type"]](self, params)
+                        finally:
+                            self._batch_call = previous_batch_call
                         if isinstance(result, _Deferred):
                             def resumed(result=None, error=None, index=index, command=command):
                                 if closed[0]:

@@ -9,7 +9,7 @@ See [Migration to 2.0](docs/MIGRATION-2.0.md) for client and bridge requirements
 - Adapt the contributions from [#4](https://github.com/wstierhout/ableton-live-mcp/pull/4)
   and [#5](https://github.com/wstierhout/ableton-live-mcp/pull/5) to the 2.0 bridge:
   write clip envelopes with positive step durations, optional explicit duration,
-  and bounded linear/exponential ramps; add `read_automation` for bounded sample
+  and bounded linear ramps; add `read_automation` for bounded sample
   readback. The complete catalog now contains 157 tools.
 - Combine overlapping parameter conversion fixes from
   [#6](https://github.com/wstierhout/ableton-live-mcp/pull/6) and

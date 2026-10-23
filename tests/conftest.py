@@ -74,3 +74,88 @@ def bridge_connection(bridge):
         return reply["result"]
 
     return SimpleNamespace(send_command=send)
+
+
+class AutomationEnvelope:
+    """Minimal public envelope API shared by automation command regressions."""
+
+    def __init__(self, events):
+        self.events = events
+        self.steps = [(0.0, 4.0, 0.5)]
+        self.reads = []
+        self.parameter = None
+
+    def insert_step(self, time, duration, value):
+        self.events.append(("insert", time, duration, value))
+        self.steps.append((time, duration, value))
+        if self.parameter is not None:
+            self.parameter.automation_state = 1
+
+    def value_at_time(self, time):
+        self.reads.append(time)
+        for start, duration, value in reversed(self.steps):
+            if start <= time <= start + duration:
+                return value
+        return 0.25
+
+
+class AutomationParameter:
+    name, min, max, is_enabled = "Gain", 0.0, 1.0, True
+    is_quantized = False
+    automation_state = 0
+
+    def __init__(self, events):
+        self.events = events
+        self._value = 0.25
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        self.events.append(("seed", value))
+        self._value = value
+
+    def str_for_value(self, value):
+        return str(value)
+
+
+@pytest.fixture
+def automation(bridge):
+    events = []
+    param = AutomationParameter(events)
+    envelope = AutomationEnvelope(events)
+    envelope.parameter = param
+
+    def clear(parameter):
+        assert parameter is param
+        events.append(("clear",))
+        envelope.steps.clear()
+        param.automation_state = 0
+
+    def lookup(parameter):
+        assert parameter is param
+        events.append(("lookup",))
+        return clip.envelope
+
+    def create(parameter):
+        assert parameter is param
+        events.append(("create",))
+        clip.envelope = envelope
+        return envelope
+
+    clip = SimpleNamespace(
+        name="Fixture",
+        length=4.0,
+        end_marker=4.0,
+        loop_end=4.0,
+        envelope=envelope,
+        clear_envelope=clear,
+        automation_envelope=lookup,
+        create_automation_envelope=create,
+    )
+    bridge._get_clip = lambda *args: clip
+    bridge._get_device = lambda *args: SimpleNamespace(name="Utility", parameters=[param])
+    bridge._song.view = SimpleNamespace(detail_clip=None)
+    return SimpleNamespace(clip=clip, parameter=param, envelope=envelope, events=events)

@@ -44,9 +44,7 @@ def catalogue():
 
 def _normalized_version(value):
     """Compare PEP 440 and SemVer forms of the same release/prerelease."""
-    match = re.fullmatch(
-        r"(\d+\.\d+\.\d+)(?:-?(alpha|beta|a|b|rc)\.?(0|[1-9]\d*))?", value
-    )
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:-?(alpha|beta|a|b|rc)\.?(0|[1-9]\d*))?", value)
     if not match:
         raise ValueError(f"Unsupported release version: {value!r}")
     release, label, serial = match.groups()
@@ -90,9 +88,9 @@ def check_release():
     assert all(package["version"] == __version__ for package in registry["packages"]), (
         "Registry package pin drift"
     )
-    assert manifest["server"]["mcp_config"]["args"] == [
-        f"mcp-server-ableton-live@{__version__}"
-    ], "Desktop launch pin drift"
+    assert manifest["server"]["mcp_config"]["args"] == [f"mcp-server-ableton-live@{__version__}"], (
+        "Desktop launch pin drift"
+    )
     assert len(registry["description"]) <= 100, "MCP Registry description limit"
 
 

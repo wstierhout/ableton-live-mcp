@@ -5,3 +5,4 @@ include scripts/export_tool_catalog.py scripts/test-windows-candidate.ps1
 prune plugins
 exclude RELEASE_CHECKLIST.md
 exclude scripts/package_plugin.py
+include scripts/test-live-candidate.py

@@ -22,14 +22,59 @@ jobs:
         run: python3 -m py_compile ableton_live_mcp/remote_script/__init__.py
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.12", "3.13", "3.14"]
+        include:
+          - os: windows-latest
+            python-version: "3.13"
+          - os: macos-14
+            python-version: "3.13"
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Tests
-        run: uv run --extra dev pytest -q
+      - name: Report source environment audio backend
+        run: uv run --frozen --extra dev python -c "from ableton_live_mcp.audio_stats import NATIVE_AUDIO; print('native_audio=', NATIVE_AUDIO)"
+      - name: Full offline suite
+        run: uv run --frozen --extra dev pytest -q
+
+  windows-installed:
+    needs: wheels
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ableton-wheels-python
+          path: wheelhouse
+      - name: Install exact portable wheel outside source imports
+        shell: pwsh
+        run: |
+          uv venv .installed-wheel --python 3.13
+          if ($LASTEXITCODE -ne 0) { throw 'Environment creation failed' }
+          $Wheels = @(Get-ChildItem -LiteralPath wheelhouse -Filter '*-py3-none-any.whl')
+          if ($Wheels.Count -ne 1) { throw 'Expected exactly one portable candidate wheel' }
+          $Python = Join-Path $PWD '.installed-wheel\Scripts\python.exe'
+          uv pip install --python $Python $Wheels[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Portable wheel installation failed' }
+          uv pip check --python $Python
+          if ($LASTEXITCODE -ne 0) { throw 'Installed dependency check failed' }
+      - name: Verify Windows installed package without Live
+        shell: pwsh
+        run: |
+          $Python = Join-Path $PWD '.installed-wheel\Scripts\python.exe'
+          .\scripts\test-windows-candidate.ps1 -Python $Python -ExpectedAudio Python `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'ableton-windows-python-evidence')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ableton-windows-installed-python-evidence
+          path: ${{ runner.temp }}/ableton-windows-python-evidence

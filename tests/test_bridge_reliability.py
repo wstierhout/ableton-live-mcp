@@ -86,14 +86,16 @@ def test_automation_prepares_every_point_before_clear(bridge):
     original = [(0, 0.5)]
     envelope = list(original)
     writes = []
-    param = SimpleNamespace(name="Gain", min=0, max=1)
+    param = SimpleNamespace(name="Gain", min=0, max=1, value=0.25, automation_state=0)
+    automation_envelope = SimpleNamespace(
+        insert_step=lambda t, duration, v: envelope.append((t, v))
+    )
     clip = SimpleNamespace(
         end_marker=4.0,
         loop_end=4.0,
         clear_envelope=lambda p: (writes.append("clear"), envelope.clear()),
-        automation_envelope=lambda p: SimpleNamespace(
-            insert_step=lambda t, duration, v: envelope.append((t, v))
-        ),
+        automation_envelope=lambda p: automation_envelope,
+        create_automation_envelope=lambda p: automation_envelope,
     )
     bridge._get_clip = lambda *args: clip
     bridge._get_device = lambda *args: SimpleNamespace(name="Utility", parameters=[param])

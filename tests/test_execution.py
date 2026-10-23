@@ -82,6 +82,8 @@ def test_cancellation_runs_cleanup_before_next_edit():
 
 
 def test_errors_keep_structured_partial_results():
+    import json
+
     from ableton_live_mcp.connection import AbletonCommandError
 
     async def exercise():
@@ -95,6 +97,10 @@ def test_errors_keep_structured_partial_results():
         assert result.isError
         assert result.structuredContent["error"]["completed_count"] == 2
         assert result.structuredContent["error"]["operation_id"] == "abc"
+        text_error = json.loads(result.content[0].text.split("\n", 1)[1])
+        assert text_error == result.structuredContent["error"]
+        assert text_error["completed_count"] == 2
+        assert text_error["operation_id"] == "abc"
         tool = (await server.list_tools())[0]
         assert "data" in tool.outputSchema["properties"]
 
@@ -121,7 +127,12 @@ def test_cancelled_clip_edit_finishes_its_started_write(monkeypatch):
             def sendall(self, data):
                 command = json.loads(data)["type"]
                 sent.append(command)
-                if command == "create_clip":
+                if command == "get_session_info":
+                    response = {
+                        "status": "success",
+                        "result": {"bridge_protocol": 2, "capabilities": ["operation_receipts"]},
+                    }
+                elif command == "create_clip":
                     response = {"status": "error", "message": "already has a clip"}
                 else:
                     if command == "set_clip_loop":
@@ -156,7 +167,7 @@ def test_cancelled_clip_edit_finishes_its_started_write(monkeypatch):
         release.set()
         await asyncio.wait_for(server.drain_workers(), 2)
         assert finished.is_set()
-        assert sent == ["create_clip", "set_clip_loop", "add_notes_to_clip"]
+        assert sent == ["get_session_info", "create_clip", "set_clip_loop", "add_notes_to_clip"]
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=5))
 
@@ -177,6 +188,59 @@ def test_cancellation_before_first_command_sends_nothing():
 
     with operation_scope(cancel, finish_started_edits=True), pytest.raises(ToolCancelled):
         conn.send_command("create_midi_track")
+
+
+def test_reading_automation_does_not_turn_later_cancellation_into_a_started_edit():
+    import pytest
+
+    from ableton_live_mcp.cancellation import (
+        ToolCancelled,
+        check_command_cancelled,
+        command_will_send,
+        operation_scope,
+    )
+
+    cancel = threading.Event()
+    with operation_scope(cancel, finish_started_edits=True):
+        command_will_send("read_automation")
+        cancel.set()
+        with pytest.raises(ToolCancelled):
+            check_command_cancelled()
+
+
+def test_error_text_preserves_partial_batch_and_recording_recovery_for_text_clients():
+    import json
+
+    from ableton_live_mcp.connection import AbletonCommandError
+
+    details = {
+        "operation_id": "partial-operation",
+        "phase": "recording_cleanup",
+        "failed_step": 2,
+        "completed_count": 1,
+        "completed_results": [{"type": "create_clip", "result": {"created": True}}],
+        "partial": True,
+        "may_have_applied": True,
+        "state": "failed",
+        "recording_recovery": {"recording_stopped": False, "requires_user_action": True},
+    }
+
+    async def exercise():
+        server = WorkerMCP("text-errors")
+
+        @server.tool()
+        def partial_failure() -> str:
+            raise AbletonCommandError("Step failed; inspect the operation receipt", details)
+
+        result = await server.call_tool("partial_failure", {})
+        assert result.isError
+        message, encoded = result.content[0].text.split("\n", 1)
+        assert message == "Step failed; inspect the operation receipt"
+        text_error = json.loads(encoded)
+        assert text_error == result.structuredContent["error"]
+        assert {key: text_error[key] for key in details} == details
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=5))
 
 
 def test_shutdown_cancellation_waits_for_recovery_and_rejects_new_work():

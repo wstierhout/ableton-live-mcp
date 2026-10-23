@@ -15,7 +15,7 @@ named server or install another bridge. If tools are missing, inspect the MCP
 connection and suggest the setup guide at https://abletonmcp.com/docs/codex/.
 
 For live work, read `get_session_info` and relevant track/device state first.
-For saved-file analysis, use `als_summary`, `als_lint` or `als_diff`; Live can stay
+For saved-file analysis, use `als_summary`, `als_find_unfinished` or `als_diff`; Live can stay
 closed. Ask for the file if its path is not provided. Never upload the set yourself.
 
 Setup is separate from tool use: `uvx mcp-server-ableton-live@2.0.0rc1 install` copies
@@ -31,14 +31,22 @@ Do not auto-replace a bridge, change client config or enable a second port-9877 
 - Musical time is beats, not seconds. Faders are normalized, not dB; 0.85 is unity.
 - Read device parameter ranges/display first. Numbers use native values; strings
   such as `250 Hz` request a bounded display conversion, which can refuse unsupported
-  mappings. Numeric strings such as `"0.5"` mean native units. Read the returned
-  display and warnings; do not invent a conversion curve. Top-level and rack
-  setters share the same conversion rules.
+  mappings. Numeric strings such as `"0.5"` use native units for continuous
+  parameters. Quantized parameters match exact labels first, including numeric
+  labels: `"8"` may mean native index 7 while the number `8` means native index 8.
+  The result warns when the label interpretation differs. Use an actual number
+  for a native position. Read the display and warnings; do not invent a curve.
+  Top-level and rack setters share the same conversion rules.
 - `add_notes_to_clip` replaces all notes. Use `edit_notes` for incremental edits.
 - `write_automation` replaces one Session clip parameter envelope. Points hold
-  until the next point or clip end unless a positive duration is supplied; ramps
-  are stepped. Verify with `read_automation`, sampling just after boundaries when
-  needed. The reader returns sampled values, not the original control points.
+  until the next point or clip end unless a positive duration is supplied; linear
+  ramps are stepped. Quantized parameters require integer points and reject ramps.
+  A beat-zero write seeds the manual value and defers envelope creation; it refuses
+  a nonzero automation state before editing. Run beat-zero writes standalone,
+  outside batches. Inspect prior value, automation state and `start_settled`.
+  Verify with `read_automation`, sampling just after boundaries when needed. The
+  reader returns sampled values, not the original control points; a grid includes
+  its end only when the end falls on the grid.
 - `duplicate_to_arrangement` overwrites the overlapping destination. Confirm the
   target/range for replacements or deletions; prefer a disposable set for exploration.
 - Use `batch_commands` for an approved related edit when useful for a single undo

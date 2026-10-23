@@ -122,7 +122,16 @@ class WorkerMCP(FastMCP):
                     }
                     return CallToolResult(
                         isError=True,
-                        content=[TextContent(type="text", text=str(exc))],
+                        content=[
+                            TextContent(
+                                type="text",
+                                text=str(exc)
+                                + "\n"
+                                + json.dumps(
+                                    error, ensure_ascii=False, separators=(",", ":"), default=str
+                                ),
+                            )
+                        ],
                         structuredContent={"data": {}, "error": error},
                     )
                 finally:

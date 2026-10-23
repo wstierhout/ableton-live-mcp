@@ -6,12 +6,22 @@ artifact hashes; results for an earlier candidate do not establish acceptance.
 
 ## Candidate and audit
 
+The initial read-only review by Claude Opus 5.5 (`claude-opus-5-5`) covered
+candidate `39daa7e` and the Windows guide before checks ran. It identified one P1,
+five P2 findings and documentation gaps. Fixes and a focused re-audit are required;
+completion of that initial review is not a passing audit or validation result.
+
 - [ ] Integrate #4 and #5 with the 2.0 validation, worker and receipt contracts.
 - [ ] Combine #6/#7 parameter conversion fixes; credit both contributions.
 - [ ] Confirm #8 Arrangement automation tools are excluded and remain deferred.
-- [ ] Complete the requested Opus 5.5 audit before running automated checks; record
-      its exact model identity, findings and fixes. If that model is unavailable,
-      disclose the limitation instead of labelling a different review as Opus 5.5.
+- [ ] Resolve the initial Opus findings and complete the focused re-audit before
+      automated checks; retain the exact model identity, source revision, findings
+      and fixes with the candidate evidence.
+- [ ] Review deferred automation timeouts/Undo, beat-zero parameter side effects,
+      legacy bridge mutation protection, text-only error recovery details and
+      quantized envelope validation against the audit findings.
+- [ ] Review the Windows verifier's Proactor setup and installed-byte assertions,
+      the guide's archive identity, Unicode displays and cancellation evidence.
 - [ ] Review the migration notes and Windows instructions against the final tools.
 
 ## Automated validation (after audit fixes)
@@ -29,7 +39,9 @@ artifact hashes; results for an earlier candidate do not establish acceptance.
       installed distributions outside editable/source imports, including a real
       MCP stdio initialize/list/call flow and setup/doctor commands.
 - [ ] Complete native/fallback wheel CI on supported macOS, Windows and Linux
-      targets. Local macOS builds do not establish Windows wheel compatibility.
+      targets. Run the complete offline suite on Windows and execute the
+      PowerShell verifier against the installed portable wheel. Local macOS
+      builds do not establish Windows wheel compatibility.
 - [ ] Refresh the website's generated catalog/version pins from this exact
       candidate; keep deployment separate from local verification.
 

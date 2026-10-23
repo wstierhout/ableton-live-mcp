@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from .cancellation import ToolCancelled, check_command_cancelled, command_will_send
+from .cancellation import READ_COMMANDS, ToolCancelled, check_command_cancelled, command_will_send
 
 ABLETON_HOST = os.environ.get("ABLETON_HOST", "localhost")
 try:
@@ -169,6 +169,50 @@ class AbletonConnection:
                 },
             )
 
+    def _require_edit_protocol(self, operation_id):
+        """Fail closed before every write, including commands unknown to this server.
+
+        The initial get_session_info probe is itself read-only, so it cannot
+        recurse into this gate. The caller holds the same reentrant I/O lock
+        across the probe and edit, and disconnect invalidates the cached result.
+        """
+        try:
+            info = self._capabilities()
+        except AbletonError as exc:
+            raise AbletonCommandError(
+                "Could not verify the installed bridge before editing; no edit was sent. "
+                + str(exc),
+                {
+                    "operation_id": operation_id,
+                    "state": "rejected_before_send",
+                    "may_have_applied": False,
+                    "required_bridge_protocol": 2,
+                    "required_capability": "operation_receipts",
+                    "bridge_probe_error": exc.details,
+                },
+            ) from exc
+        protocol = info.get("bridge_protocol", 1)
+        if (
+            type(protocol) is not int
+            or protocol < 2
+            or "operation_receipts" not in info.get("capabilities", ())
+        ):
+            raise AbletonCommandError(
+                "The installed bridge cannot safely execute 2.0 edits. "
+                "Run `ableton-live-mcp install`, restart Live or reload AbletonMCP, "
+                "then run `ableton-live-mcp doctor`. Existing read-only tools remain available. "
+                "No edit was sent.",
+                {
+                    "operation_id": operation_id,
+                    "state": "rejected_before_send",
+                    "may_have_applied": False,
+                    "required_bridge_protocol": 2,
+                    "required_capability": "operation_receipts",
+                    "bridge_protocol": protocol,
+                    "bridge_version": info.get("bridge_version"),
+                },
+            )
+
     def receive_full_response(self, buffer_size=8192) -> dict[str, Any]:
         """Receive one complete JSON reply, potentially in multiple chunks,
         and return it parsed. The caller sets the socket timeout.
@@ -230,6 +274,8 @@ class AbletonConnection:
             check_command_cancelled()
             if not self.sock and not self.connect():
                 raise AbletonNotConnectedError(_NOT_CONNECTED_MSG)
+            if command_type not in READ_COMMANDS:
+                self._require_edit_protocol(operation_id)
             try:
                 logger.info(f"Sending command: {command_type}")
                 logger.debug(f"Command params: {params}")
@@ -262,8 +308,12 @@ class AbletonConnection:
                     )
                 if command_type == "get_session_info" and response["status"] == "success":
                     self._bridge_info = dict(response["result"])
-                    self._bridge_info["capabilities"] = tuple(
-                        self._bridge_info.get("capabilities", ())
+                    capabilities = self._bridge_info.get("capabilities", ())
+                    self._bridge_info["capabilities"] = (
+                        tuple(capabilities)
+                        if isinstance(capabilities, (list, tuple))
+                        and all(isinstance(item, str) for item in capabilities)
+                        else ()
                     )
             except ToolCancelled:
                 raise

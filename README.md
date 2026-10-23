@@ -177,15 +177,24 @@ Unset loads everything.
   fader range where 0.85 is 0 dB.
 - Device parameters use each parameter's own range. Read `get_device_parameters`
   first and check min, max, and the display value before setting. Numeric strings
-  such as `"0.5"` use native units; display strings such as `"-12 dB"` request a
-  supported display mapping. Top-level and rack setters use the same conversion.
+  such as `"0.5"` use native units for continuous parameters. Quantized parameters
+  match exact display labels first, including numeric labels: `"8"` can select the
+  label at native index 7, while the number `8` selects native index 8. The result
+  warns when that label match changes the numeric interpretation. Send an actual
+  number to choose by native position. Display strings such as `"-12 dB"` request
+  a supported display mapping. Top-level and rack setters share these rules.
 - `write_automation` replaces a single Session clip parameter envelope. A point
   holds until the next point or clip end unless a positive duration is supplied.
-  Linear/exponential ramps become bounded stepped envelopes (at most 4,096 steps).
-  `read_automation` returns at most 1,024 samples at requested beat positions,
-  including the requested interval endpoints. These are Live's sampled values,
-  not the original control points; sample just after step boundaries when checking
-  a transition. These are clip envelopes, not Arrangement automation.
+  Linear ramps become bounded stepped envelopes (at most 4,096 steps).
+  Quantized parameters require integer point values and do not support ramp mode.
+  A write starting at beat zero sets the manual parameter value before its deferred
+  envelope write, and refuses a nonzero automation state before changing anything.
+  Beat-zero writes must be standalone calls, outside batches. Inspect the returned
+  prior value, automation state and `start_settled` readback.
+  `read_automation` returns at most 1,024 samples at explicit beat positions or on
+  a start/end/step grid. A grid includes its end only when the end is on the grid.
+  These are Live's sampled values, not original control points; sample just after
+  step boundaries when checking a transition. These are clip envelopes.
 - `add_notes_to_clip` replaces the clip's notes. Use `edit_notes` to add or remove a
   few without touching the rest.
 - Placing a session clip into the arrangement overwrites whatever is under it, which
@@ -262,8 +271,11 @@ uv run --extra dev pytest      # tests
 uvx ruff check .               # lint
 ```
 
-CI runs lint, a byte-compile of the Remote Script, and tests on Python 3.10, 3.12,
-3.13, and 3.14.
+CI defines lint, a byte-compile of the Remote Script, and the full offline suite
+on Ubuntu with Python 3.10, 3.12, 3.13 and 3.14, plus Python 3.13 on Windows and
+macOS. A separate Windows job verifies the installed portable wheel. Native audio
+wheels have their own platform build/parity jobs; actual Live acceptance remains
+separate.
 
 ## Frequently asked questions
 

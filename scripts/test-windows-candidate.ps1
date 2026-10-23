@@ -43,21 +43,26 @@ report = {
     "platform": platform.platform(),
     "windows_version": platform.win32_ver(),
     "checks": {},
-    "network_access": "blocked in this verification process",
+    "network_access": "blocked during verification after local event-loop setup",
     "live_acceptance": "not run; this script does not contact Live",
 }
 
 def deny_network(*args, **kwargs):
     raise AssertionError("Network access attempted during offline verification")
 
-socket.create_connection = deny_network
-socket.socket.connect = deny_network
-socket.socket.connect_ex = deny_network
-os.environ.pop("ABLETON_TOOLSETS", None)
-os.environ["ABLETON_HOST"] = "127.0.0.1"
-os.environ["ABLETON_PORT"] = "1"
-
+loop = None
 try:
+    # Windows asyncio builds a local socketpair for its self-pipe. Initialize it
+    # before blocking connects so that the guard cannot break Proactor startup.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    socket.create_connection = deny_network
+    socket.socket.connect = deny_network
+    socket.socket.connect_ex = deny_network
+    os.environ.pop("ABLETON_TOOLSETS", None)
+    os.environ["ABLETON_HOST"] = "127.0.0.1"
+    os.environ["ABLETON_PORT"] = "1"
+
     import ableton_live_mcp
     from ableton_live_mcp import audio_stats, tools
     from ableton_live_mcp.app import mcp
@@ -106,11 +111,14 @@ try:
         installed = pathlib.Path(user_library) / "Remote Scripts" / "AbletonMCP" / "__init__.py"
         report["installed_bridge_path"] = str(installed)
         report["installed_bridge_exists"] = installed.is_file()
-        if installed.is_file():
-            report["installed_bridge_sha256"] = hashlib.sha256(installed.read_bytes()).hexdigest()
-            report["installed_bridge_matches_package"] = installed.read_bytes() == source
+        assert report["installed_bridge_exists"], "Requested installed bridge is missing"
+        installed_source = installed.read_bytes()
+        report["installed_bridge_sha256"] = hashlib.sha256(installed_source).hexdigest()
+        report["installed_bridge_matches_package"] = installed_source == source
+        assert report["installed_bridge_matches_package"], "Installed bridge differs from this package"
+        report["checks"]["installed_bridge_identity"] = True
 
-    registered = asyncio.run(mcp.list_tools())
+    registered = loop.run_until_complete(mcp.list_tools())
     names = {tool.name for tool in registered}
     report["tool_count"] = len(registered)
     report["tool_names"] = sorted(names)
@@ -140,6 +148,10 @@ except Exception as exc:
     report["ok"] = False
     report["error"] = {"type": type(exc).__name__, "message": str(exc)}
     traceback.print_exc(file=sys.stderr)
+finally:
+    if loop is not None:
+        loop.close()
+    asyncio.set_event_loop(None)
 print(json.dumps(report, indent=2))
 sys.exit(0 if report["ok"] else 1)
 '@

@@ -16,83 +16,6 @@ from ableton_live_mcp.tools import arrangement, session
 TARGET = {"track_index": 0, "clip_index": 0, "device_index": 0, "parameter": "Gain"}
 
 
-class Envelope:
-    def __init__(self, events):
-        self.events = events
-        self.steps = [(0.0, 4.0, 0.5)]
-        self.reads = []
-
-    def insert_step(self, time, duration, value):
-        self.events.append(("insert", time, duration, value))
-        self.steps.append((time, duration, value))
-
-    def value_at_time(self, time):
-        self.reads.append(time)
-        for start, duration, value in reversed(self.steps):
-            if start <= time <= start + duration:
-                return value
-        return 0.25
-
-
-class Parameter:
-    name, min, max, is_enabled = "Gain", 0.0, 1.0, True
-    is_quantized = False
-
-    def __init__(self, events):
-        self.events = events
-        self._value = 0.25
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, value):
-        self.events.append(("seed", value))
-        self._value = value
-
-    def str_for_value(self, value):
-        return str(value)
-
-
-@pytest.fixture
-def automation(bridge):
-    events = []
-    param = Parameter(events)
-    envelope = Envelope(events)
-
-    def clear(parameter):
-        assert parameter is param
-        events.append(("clear",))
-        envelope.steps.clear()
-
-    def lookup(parameter):
-        assert parameter is param
-        events.append(("lookup",))
-        return clip.envelope
-
-    def create(parameter):
-        assert parameter is param
-        events.append(("create",))
-        clip.envelope = envelope
-        return envelope
-
-    clip = SimpleNamespace(
-        name="Fixture",
-        length=4.0,
-        end_marker=4.0,
-        loop_end=4.0,
-        envelope=envelope,
-        clear_envelope=clear,
-        automation_envelope=lookup,
-        create_automation_envelope=create,
-    )
-    bridge._get_clip = lambda *args: clip
-    bridge._get_device = lambda *args: SimpleNamespace(name="Utility", parameters=[param])
-    bridge._song.view = SimpleNamespace(detail_clip=None)
-    return SimpleNamespace(clip=clip, parameter=param, envelope=envelope, events=events)
-
-
 def dispatch(bridge, command, **params):
     return bridge.dispatch({"type": command, "params": {**TARGET, **params}})
 
@@ -219,8 +142,9 @@ def test_ramps_allow_an_instantaneous_equal_time_jump(bridge, automation):
     assert all(duration > 0 for _, duration, _ in automation.envelope.steps)
 
 
-def test_beat_zero_ramp_waits_a_live_tick_before_replacing_the_envelope(
-    bridge, bridge_module, automation
+@pytest.mark.parametrize("mode", ["points", "ramp"])
+def test_beat_zero_write_waits_a_live_tick_before_replacing_the_envelope(
+    bridge, bridge_module, automation, mode
 ):
     deferred = bridge._write_automation(
         0,
@@ -228,7 +152,7 @@ def test_beat_zero_ramp_waits_a_live_tick_before_replacing_the_envelope(
         0,
         "Gain",
         [{"time": 0, "value": 0.2}, {"time": 1, "value": 0.8}],
-        mode="ramp",
+        mode=mode,
         step_length=0.25,
     )
     assert isinstance(deferred, bridge_module._Deferred)
@@ -253,7 +177,7 @@ def test_oversized_points_request_preserves_the_envelope(bridge, automation):
     assert not any(event[0] in {"clear", "create", "insert", "seed"} for event in automation.events)
 
 
-def test_batch_waits_for_ramp_before_readback_and_keeps_one_undo_step(bridge, automation):
+def test_batch_writes_a_nonzero_start_ramp_and_reads_it_in_one_undo_step(bridge, automation):
     reply = bridge.dispatch(
         {
             "type": "batch",
@@ -265,10 +189,10 @@ def test_batch_waits_for_ramp_before_readback_and_keeps_one_undo_step(bridge, au
                             **TARGET,
                             "mode": "ramp",
                             "step_length": 0.25,
-                            "points": [{"time": 0, "value": 0.2}, {"time": 1, "value": 0.8}],
+                            "points": [{"time": 0.25, "value": 0.2}, {"time": 1.25, "value": 0.8}],
                         },
                     },
-                    {"type": "read_automation", "params": {**TARGET, "times": [0, 0.75]}},
+                    {"type": "read_automation", "params": {**TARGET, "times": [0.25, 1.0]}},
                 ]
             },
         }
@@ -276,8 +200,8 @@ def test_batch_waits_for_ramp_before_readback_and_keeps_one_undo_step(bridge, au
     assert reply["status"] == "success", reply
     assert reply["result"]["executed"] == 2
     sampled = reply["result"]["results"][1]["result"]["samples"]
-    assert [(item["time"], item["value"]) for item in sampled] == [(0.0, 0.2), (0.75, 0.8)]
-    assert automation.envelope.value_at_time(0.75) == pytest.approx(0.8)
+    assert [(item["time"], item["value"]) for item in sampled] == [(0.25, 0.2), (1.0, 0.8)]
+    assert automation.envelope.value_at_time(1.0) == pytest.approx(0.8)
     assert bridge.edits == ["begin", "end"]
 
 
