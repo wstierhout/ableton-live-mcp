@@ -124,13 +124,13 @@ def test_finite_db_conversion_handles_infinite_sampled_endpoints(
     assert param.writes == []
 
 
-@pytest.mark.parametrize("request", ["-inf dB", "\u2212\u221e dB", "-INF db"])
+@pytest.mark.parametrize("requested_value", ["-inf dB", "\u2212\u221e dB", "-INF db"])
 @pytest.mark.parametrize("descending", [False, True])
 def test_explicit_minus_infinity_selects_only_the_matching_endpoint(
-    bridge_module, request, descending
+    bridge_module, requested_value, descending
 ):
     param = gain(unicode=True, descending=descending)
-    assert bridge_module._parameter_value(param, request) == (1 if descending else -1, None)
+    assert bridge_module._parameter_value(param, requested_value) == (1 if descending else -1, None)
     assert param.writes == []
 
 
@@ -151,7 +151,10 @@ def test_plus_infinity_endpoint_also_resolves_for_finite_and_explicit_requests(
 
 def test_finite_endpoint_request_is_available_without_speculative_writes(bridge_module):
     param = gain()
-    assert bridge_module._parameter_value(param, "35 dB")[0] == 1
+    native, warning = bridge_module._parameter_value(param, "35 dB")
+    assert native == pytest.approx(1, abs=0.001)
+    assert param.str_for_value(native) == "35.00 dB"
+    assert "approximate" in warning
     assert param.writes == []
 
 
@@ -163,11 +166,11 @@ def test_nonfinite_native_values_are_rejected_without_writing(bridge_module, val
     assert param.writes == []
 
 
-@pytest.mark.parametrize("request", ["inf dB", "-inf Hz", "NaN dB", "-inf", "-12 Hz"])
-def test_invalid_or_unmatched_display_requests_fail_without_writing(bridge_module, request):
+@pytest.mark.parametrize("requested_value", ["inf dB", "-inf Hz", "NaN dB", "-inf", "-12 Hz"])
+def test_invalid_or_unmatched_display_requests_fail_without_writing(bridge_module, requested_value):
     param = gain()
     with pytest.raises(ValueError):
-        bridge_module._parameter_value(param, request)
+        bridge_module._parameter_value(param, requested_value)
     assert param.writes == []
 
 
