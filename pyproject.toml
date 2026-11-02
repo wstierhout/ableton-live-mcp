@@ -34,6 +34,7 @@ classifiers = [
 dependencies = [
     "mcp[cli]>=1.29.1,<2",
     "av>=16.1,<19",
+    "numpy>=1.24",
     # Security floors for dependencies already pulled in by the MCP/CLI stack.
     # Keep old shared environments from satisfying this release with audited
     # vulnerable versions. Reassess these alongside uv.lock when upgrading.

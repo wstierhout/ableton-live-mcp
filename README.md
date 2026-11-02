@@ -11,7 +11,7 @@
 **Website and installation guide: [abletonmcp.com](https://abletonmcp.com)**
 
 Control Ableton Live from an AI assistant. This is a Model Context Protocol (MCP)
-server that gives Claude, Cursor, Codex, or any MCP client 156 tools for building
+server that gives Claude, Cursor, Codex, or any MCP client 158 tools for building
 tracks, editing MIDI, loading instruments and effects, mixing, and mastering inside
 a running Ableton Live set, plus offline tools that read and diff saved `.als`
 project files with Live closed.
@@ -113,7 +113,7 @@ an upright bass, and Rhodes chords, then put a limiter on the master at -1 dB."
 | Arrangement | place clips on the timeline, read and delete arrangement clips, write clip automation |
 | Generators | drum patterns in 7 styles, euclidean rhythms, chord progressions, voice-led jazz voicings, 50-plus genre-aware progressions, voice-leading melodies, walking basslines, motif transforms (invert, retrograde, augment), minimalist processes, humanize, one-call session setup |
 | Batch | run many edits in one round trip and one undo step |
-| Audio and analysis | record a section to a WAV without the Export dialog, detect key and scale, scan the mix for problems, diff the session since the last check |
+| Audio and analysis | record a section to a WAV without the Export dialog, capture what Live is playing and measure its stereo and tonal balance, detect key and scale, scan the mix for problems, diff the session since the last check |
 | Offline (no Live) | summarize, list tracks, extract MIDI, detect key, read mixer and locator detail, diff two versions, lint a saved `.als`, and parse `.adg`/`.adv` racks with edition detection |
 | Recipes | scaffold a genre starter (lofi, house) in one call |
 
@@ -128,6 +128,17 @@ device parameters.
 Every action is a specific tool with validated arguments; there is no arbitrary-code
 path. Some tools still make destructive edits (delete a track, replace a clip's
 notes, overwrite an arrangement region), so save your work before a big session.
+
+## Hearing your session
+
+Optional, macOS only. `record_audio` records Live's output from a loopback device without
+changing the set, and `analyze_audio` turns the recording into peak and RMS levels, clipping,
+stereo balance and correlation, and how energy splits across low, mid and high frequencies.
+
+1. `brew install ffmpeg blackhole-2ch`
+2. In Audio MIDI Setup, create a Multi-Output Device with your speakers and BlackHole 2ch.
+3. Select that device as Live's audio output (Settings > Audio).
+4. Allow Microphone access for the app running this server if macOS asks.
 
 ## Audio analysis and session changes
 
@@ -146,7 +157,7 @@ restarting Live keeps the bridge's snapshot format matched to the server.
 
 ## Focusing the toolset
 
-The server registers 156 tools. That is a lot for a model to choose from on a small
+The server registers 158 tools. That is a lot for a model to choose from on a small
 task. Set `ABLETON_TOOLSETS` to load only the groups you need, for example
 `ABLETON_TOOLSETS=session,tracks,clips,generators`. Groups (each may span several modules): `session`, `tracks`, `clips`, `devices`,
 `browser`, `arrangement`, `generators`, `audio`, `analysis`, `offline`, `recipes`.
@@ -218,7 +229,7 @@ saved `.als` projects.
 
 ### How is this different from other Ableton MCP servers?
 
-This server exposes 156 specific, validated tools rather than an arbitrary-code
+This server exposes 158 specific, validated tools rather than an arbitrary-code
 execution tool. It includes destructive/read-only hints, workflow prompts, built-in
 music generators, mixing and analysis tools, and offline `.als`/`.adg` inspection.
 The Remote Script and MCP package are versioned and tested together.

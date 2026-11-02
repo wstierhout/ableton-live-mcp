@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `record_audio`: capture what Live is playing through a loopback device, without
+  changing the set. Requires macOS, ffmpeg and BlackHole.
+- `analyze_audio`: levels, clipping, stereo balance and correlation, low/mid/high
+  energy and spectral centroid for those recordings. Adds a numpy dependency. 158 tools total.
+
 ## 1.8.1 — 2026-09-16
 
 - Live 11: the Remote Script no longer logs `Server accept error: timed out` every
