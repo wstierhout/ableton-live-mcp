@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.wstierhout/ableton-live-mcp",
   "title": "Ableton Live MCP Server",
-  "description": "Control Ableton Live with 156 typed tools for music production and offline .als analysis.",
+  "description": "Control Ableton Live with 158 typed tools for music production and offline .als analysis.",
   "websiteUrl": "https://abletonmcp.com",
   "repository": {
     "url": "https://github.com/wstierhout/ableton-live-mcp",
